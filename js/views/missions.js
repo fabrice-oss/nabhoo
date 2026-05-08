@@ -37,6 +37,7 @@ export function render() {
     </div>
     <div class="filter-bar glass-card">
       <button class="filter-btn active" data-filter="tous">Toutes</button>
+      <button class="filter-btn" data-filter="a_venir">À venir</button>
       <button class="filter-btn" data-filter="en_cours">En cours</button>
       <button class="filter-btn" data-filter="terminee">Terminées</button>
       <button class="filter-btn" data-filter="annulee">Annulées</button>
@@ -51,14 +52,22 @@ function typeLabel(type) {
 }
 
 function renderMissionsList(filter) {
+  const today = isoToday();
   const list = filter === 'tous'
     ? store.missions
-    : store.missions.filter(m => m.statut === filter);
+    : filter === 'a_venir'
+      ? store.missions.filter(m => m.statut !== 'annulee' && m.statut !== 'terminee' && (m.sessions?.[0]?.date || '') > today)
+      : filter === 'en_cours'
+        ? store.missions.filter(m => m.statut === 'en_cours' && (m.sessions?.[0]?.date || '') <= today)
+        : store.missions.filter(m => m.statut === filter);
 
   const sorted = [...list].sort((a, b) => {
     const aDate = (a.sessions?.[0]?.date) || '';
     const bDate = (b.sessions?.[0]?.date) || '';
-    return bDate.localeCompare(aDate);
+    // Pour "à venir" : ordre chronologique (la plus proche en premier)
+    return filter === 'a_venir'
+      ? aDate.localeCompare(bDate)
+      : bDate.localeCompare(aDate);
   });
 
   if (sorted.length === 0) return '<p class="empty-state">Aucune mission.</p>';
@@ -73,8 +82,9 @@ function renderMissionsList(filter) {
       const lastDate = sessions[sessions.length - 1]?.date;
       const total = missionTotalHT(m);
       const heures = missionHeuresFormateur(m);
-      const statutClass = { en_cours: 'info', terminee: 'success', annulee: 'danger' }[m.statut] || 'info';
-      const statutLabel = { en_cours: 'En cours', terminee: 'Terminée', annulee: 'Annulée' }[m.statut] || m.statut;
+      const isAVenir = m.statut === 'en_cours' && (firstDate || '') > today;
+      const statutClass = isAVenir ? 'warning' : ({ en_cours: 'info', terminee: 'success', annulee: 'danger' }[m.statut] || 'info');
+      const statutLabel = isAVenir ? 'À venir' : ({ en_cours: 'En cours', terminee: 'Terminée', annulee: 'Annulée' }[m.statut] || m.statut);
 
       return `
         <div class="mission-card glass-card" data-id="${m.id}">
