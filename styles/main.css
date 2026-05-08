@@ -92,6 +92,8 @@ body::before {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* ── Login ──────────────────────────────────── */
@@ -322,6 +324,11 @@ body::before {
   font-size: 1.1rem;
   font-weight: 700;
   letter-spacing: -0.01em;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .top-bar-right { display: flex; align-items: center; gap: 16px; }
@@ -1191,12 +1198,13 @@ button:focus-visible, a:focus-visible {
   .nav-icon { width: 18px !important; height: 18px !important; }
   .sidebar-header { justify-content: flex-start; }
 
-  /* Main content pleine largeur */
-  .main-content { margin-left: 0; }
+  /* Main content pleine largeur — overflow-x hard-stop */
+  .main-content { margin-left: 0; overflow-x: hidden; }
+  .content-area { overflow-x: hidden; }
 
   /* Top bar */
   .top-bar { margin: 8px 10px 0; padding: 0 14px; height: 54px; }
-  .top-bar h2 { font-size: 0.95rem; }
+  .top-bar h2 { font-size: 0.95rem; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .top-bar-year { display: none; }
 
   /* Content area — safe-area pour encoche/barre home iOS */
@@ -1208,7 +1216,8 @@ button:focus-visible, a:focus-visible {
 
   /* View header */
   .view-header { flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
-  .view-header h2 { font-size: 1.2rem; }
+  .view-header h2 { font-size: 1.2rem; flex: 1; min-width: 0; }
+  .view-header > .btn-primary { flex-shrink: 0; }
 
   /* Stats */
   .stats-grid { grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
@@ -1239,9 +1248,16 @@ button:focus-visible, a:focus-visible {
   .filter-btn { padding: 10px 16px; font-size: 0.875rem; white-space: nowrap; flex-shrink: 0; min-height: 44px; }
 
   /* Tables scrollables */
-  .table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .data-table { min-width: 560px; font-size: 0.875rem; }
-  .data-table th, .data-table td { padding: 12px 10px; }
+  .table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; width: 100%; }
+  .data-table { min-width: 480px; font-size: 0.82rem; }
+  .data-table th, .data-table td { padding: 10px 8px; }
+
+  /* BPF — champs en 2 colonnes compactes, table scrollable */
+  .bpf-fields { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .bpf-field { padding: 8px 10px; }
+  .bpf-section { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .bpf-table { min-width: 500px; font-size: 0.82rem; }
+  .bpf-table th, .bpf-table td { padding: 8px 10px; }
 
   /* Forms pleine largeur */
   .form-group-half { flex: 1 1 100% !important; min-width: 0 !important; }
