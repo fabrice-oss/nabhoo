@@ -30,16 +30,27 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { font-size: 16px; }
+html {
+  font-size: 16px;
+  overflow-x: hidden;
+  max-width: 100vw;
+}
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   background: var(--navy-deeper);
   color: var(--text-primary);
   min-height: 100vh;
+  width: 100%;
+  max-width: 100vw;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   line-height: 1.6;
+}
+
+img, video, svg, canvas, iframe {
+  max-width: 100%;
+  height: auto;
 }
 
 /* ── Fond animé ─────────────────────────────── */
@@ -475,7 +486,7 @@ body::before {
 /* ── Dashboard ──────────────────────────────── */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -609,7 +620,7 @@ body::before {
 /* ── Missions grid ──────────────────────────── */
 .missions-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
   gap: 18px;
 }
 
@@ -670,7 +681,7 @@ body::before {
   flex-direction: column;
   gap: 6px;
 }
-.form-group-half { flex: 1 1 calc(50% - 8px); min-width: 140px; }
+.form-group-half { flex: 1 1 calc(50% - 8px); min-width: min(140px, 100%); }
 .form-group-full { flex: 1 1 100%; }
 
 label {
@@ -960,7 +971,7 @@ input[type="checkbox"] {
 
 .bpf-fields {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
   gap: 10px;
   margin-bottom: 12px;
 }
@@ -1188,8 +1199,12 @@ button:focus-visible, a:focus-visible {
   .top-bar h2 { font-size: 0.95rem; }
   .top-bar-year { display: none; }
 
-  /* Content area */
-  .content-area { padding: 12px 10px 32px; }
+  /* Content area — safe-area pour encoche/barre home iOS */
+  .content-area {
+    padding: 12px 10px calc(32px + env(safe-area-inset-bottom));
+    padding-left: max(10px, env(safe-area-inset-left));
+    padding-right: max(10px, env(safe-area-inset-right));
+  }
 
   /* View header */
   .view-header { flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
