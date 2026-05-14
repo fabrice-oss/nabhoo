@@ -1070,19 +1070,12 @@ input[type="checkbox"] {
 .app-footer strong { color: var(--text-secondary); font-weight: 600; }
 .footer-sep { color: var(--glass-border-strong); }
 .footer-creator-link {
-  display: inline-flex;
-  align-items: center;
+  color: var(--orange);
   text-decoration: none;
-  opacity: 0.75;
+  font-weight: 500;
   transition: opacity 0.2s;
 }
-.footer-creator-link:hover { opacity: 1; }
-.footer-creator-logo {
-  height: 28px;
-  width: 28px;
-  object-fit: contain;
-  border-radius: 50%;
-}
+.footer-creator-link:hover { opacity: 0.8; text-decoration: underline; }
 .footer-brand {
   font-weight: 700;
   font-size: 0.72rem;
