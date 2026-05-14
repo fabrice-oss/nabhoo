@@ -175,6 +175,22 @@ body::before {
   color: var(--text-muted);
 }
 
+.login-footer-links {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.login-footer-links a {
+  color: rgba(255,255,255,0.45);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.login-footer-links a:hover { color: rgba(255,255,255,0.8); text-decoration: underline; }
+
 /* ── App shell ──────────────────────────────── */
 .app {
   display: flex;
