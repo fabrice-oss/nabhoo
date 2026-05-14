@@ -17,23 +17,32 @@ export function render(params = {}) {
     <div class="filter-bar glass-card">
       <button class="filter-btn active" data-filter="tous">Toutes</button>
       <button class="filter-btn" data-filter="en_attente">En attente</button>
+      <button class="filter-btn" data-filter="en_retard">⚠️ En retard</button>
       <button class="filter-btn" data-filter="payee">Payées</button>
     </div>
     <div id="factures-list">${renderFacturesList('tous')}</div>`;
 }
 
 function renderFacturesList(filter) {
-  const list = filter === 'tous' ? store.factures : store.factures.filter(f => f.statut === filter);
+  const today = isoToday();
+  const list = filter === 'tous'
+    ? store.factures
+    : filter === 'en_retard'
+      ? store.factures.filter(f => f.statut === 'en_attente' && f.date_echeance < today)
+      : store.factures.filter(f => f.statut === filter);
   const sorted = [...list].sort((a, b) => b.numero.localeCompare(a.numero));
 
-  if (sorted.length === 0) return '<p class="empty-state">Aucune facture.</p>';
+  const emptyMsg = { en_retard: 'Aucune facture en retard ✓', en_attente: 'Aucune facture en attente.', payee: 'Aucune facture payée.' };
+  if (sorted.length === 0) return `<p class="empty-state">${emptyMsg[filter] || 'Aucune facture.'}</p>`;
 
   const totalEnAttente = store.factures.filter(f => f.statut === 'en_attente').reduce((s, f) => s + f.montant_ht, 0);
+  const totalEnRetard = store.factures.filter(f => f.statut === 'en_attente' && f.date_echeance < today).reduce((s, f) => s + f.montant_ht, 0);
 
   return `
     ${filter !== 'payee' ? `
     <div class="glass-card summary-bar">
       <span>Total en attente : <strong>${formatCurrency(totalEnAttente)}</strong></span>
+      ${totalEnRetard > 0 ? `<span style="color:var(--badge-danger-color,#ff6b7a)">⚠️ Dont en retard : <strong>${formatCurrency(totalEnRetard)}</strong></span>` : ''}
     </div>` : ''}
     <div class="glass-card">
       <div class="table-wrapper">

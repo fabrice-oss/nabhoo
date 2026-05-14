@@ -56,7 +56,7 @@ function renderMissionsList(filter) {
   const list = filter === 'tous'
     ? store.missions
     : filter === 'a_venir'
-      ? store.missions.filter(m => m.statut !== 'annulee' && m.statut !== 'terminee' && (m.sessions?.[0]?.date || '') > today)
+      ? store.missions.filter(m => m.statut === 'a_venir' || (m.statut === 'en_cours' && (m.sessions?.[0]?.date || '') > today))
       : filter === 'en_cours'
         ? store.missions.filter(m => m.statut === 'en_cours' && (m.sessions?.[0]?.date || '') <= today)
         : store.missions.filter(m => m.statut === filter);
@@ -82,9 +82,9 @@ function renderMissionsList(filter) {
       const lastDate = sessions[sessions.length - 1]?.date;
       const total = missionTotalHT(m);
       const heures = missionHeuresFormateur(m);
-      const isAVenir = m.statut === 'en_cours' && (firstDate || '') > today;
+      const isAVenir = m.statut === 'a_venir' || (m.statut === 'en_cours' && (firstDate || '') > today);
       const statutClass = isAVenir ? 'warning' : ({ en_cours: 'info', terminee: 'success', annulee: 'danger' }[m.statut] || 'info');
-      const statutLabel = isAVenir ? 'À venir' : ({ en_cours: 'En cours', terminee: 'Terminée', annulee: 'Annulée' }[m.statut] || m.statut);
+      const statutLabel = isAVenir ? '🗓 À venir' : ({ en_cours: 'En cours', terminee: 'Terminée', annulee: 'Annulée' }[m.statut] || m.statut);
 
       return `
         <div class="mission-card glass-card" data-id="${m.id}">
@@ -180,6 +180,7 @@ function missionFormHTML(m = {}) {
       <div class="form-group form-group-half">
         <label>Statut</label>
         <select name="statut">
+          <option value="a_venir" ${m.statut === 'a_venir' ? 'selected' : ''}>À venir</option>
           <option value="en_cours" ${(m.statut || 'en_cours') === 'en_cours' ? 'selected' : ''}>En cours</option>
           <option value="terminee" ${m.statut === 'terminee' ? 'selected' : ''}>Terminée</option>
           <option value="annulee" ${m.statut === 'annulee' ? 'selected' : ''}>Annulée</option>
