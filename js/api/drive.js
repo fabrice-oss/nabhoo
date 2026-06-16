@@ -152,7 +152,11 @@ async function uploadFile(filename, fileBlob, mimeType, parentId) {
     },
     body: combined,
   });
-  return res.json();
+  const data = await res.json();
+  if (!res.ok || !data.webViewLink) {
+    throw new Error(`Échec de l'upload Drive (${res.status}): ${data?.error?.message || 'webViewLink manquant'}`);
+  }
+  return data;
 }
 
 export async function uploadPDF(filename, pdfBlob) {
