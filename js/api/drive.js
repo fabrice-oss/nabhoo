@@ -4,6 +4,7 @@ const BASE = 'https://www.googleapis.com';
 let folderId = null;
 let facturesFolderId = null;
 let contratsFolderId = null;
+let fichesFolderId = null;
 let fileIds = {};
 
 async function req(path, options = {}) {
@@ -43,6 +44,7 @@ export async function initDriveFolder(folderName) {
   folderId = await findFolder(folderName) || await createFolder(folderName);
   facturesFolderId = await findFolder('factures', folderId) || await createFolder('factures', folderId);
   contratsFolderId = await findFolder('contrats', folderId) || await createFolder('contrats', folderId);
+  fichesFolderId = await findFolder('fiches', folderId) || await createFolder('fiches', folderId);
   const dataFolderId = await findFolder('data', folderId) || await createFolder('data', folderId);
   fileIds._dataFolder = dataFolderId;
   return folderId;
@@ -165,6 +167,19 @@ export async function uploadPDF(filename, pdfBlob) {
 
 export async function uploadContrat(filename, fileBlob, mimeType) {
   return uploadFile(filename, fileBlob, mimeType, contratsFolderId);
+}
+
+export async function uploadFiche(filename, fileBlob, mimeType) {
+  return uploadFile(filename, fileBlob, mimeType, fichesFolderId);
+}
+
+export async function fetchDriveBlob(driveId) {
+  const token = getToken();
+  const res = await fetch(`${BASE}/drive/v3/files/${driveId}?alt=media`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Drive fetch ${res.status}`);
+  return res.blob();
 }
 
 export async function deleteDriveFile(fileId) {

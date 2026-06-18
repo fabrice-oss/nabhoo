@@ -2,7 +2,7 @@ import { store, saveMissions, getOrganisme, getMissionEntreprises, getMissionFac
 import { uuid, toast, escHtml, confirm, formatDate, formatCurrency, missionTotalHT, missionHeuresFormateur, isoToday } from '../utils.js';
 import { showModal, closeModal, navigate } from '../app.js';
 import { createEvent } from '../api/calendar.js';
-import { uploadContrat, deleteDriveFile } from '../api/drive.js';
+import { uploadContrat, uploadFiche, fetchDriveBlob, deleteDriveFile } from '../api/drive.js';
 
 const CONTRAT_MAX_SIZE = 10 * 1024 * 1024; // 10 Mo
 const CONTRAT_ALLOWED_TYPES = [
@@ -179,68 +179,153 @@ function missionDetailHTML(m) {
   const statutClass = isAVenir ? 'warning' : ({ en_cours: 'info', terminee: 'success', annulee: 'danger' }[m.statut] || 'info');
   const statutLabel = isAVenir ? '🗓 À venir' : ({ en_cours: 'En cours', terminee: 'Terminée', annulee: 'Annulée' }[m.statut] || m.statut);
   const specialite = SPECIALITES.find(s => s.code === m.specialite);
+  const factureStatutClass = facture?.statut === 'payee' ? 'success' : (facture && facture.date_echeance < today ? 'danger' : 'warning');
+  const factureStatutLabel = facture?.statut === 'payee' ? '✓ Payée' : (facture?.date_echeance < today ? '⚠️ En retard' : '⏳ En attente');
 
   return `
-    <div class="mission-detail">
-      <div class="detail-badges">
-        <span class="badge badge-${statutClass}">${statutLabel}</span>
-        <span class="badge badge-info">${escHtml(typeLabel(m.type))}</span>
-        ${m.distanciel ? '<span class="badge badge-info">🖥 Distanciel</span>' : ''}
-        ${facture ? `<span class="badge badge-${facture.statut === 'payee' ? 'success' : 'warning'}">${facture.statut === 'payee' ? '✓ Facture payée' : '⏳ Facturée'}</span>` : ''}
+    <div class="mission-detail-v2">
+
+      <!-- Badges statut -->
+      <div class="detail-badges-row">
+        <span class="badge badge-${statutClass} badge-lg">${statutLabel}</span>
+        <span class="badge badge-info badge-lg">${escHtml(typeLabel(m.type))}</span>
+        ${m.distanciel ? '<span class="badge badge-info badge-lg">🖥 Distanciel</span>' : ''}
+        ${facture ? `<span class="badge badge-${factureStatutClass} badge-lg">${factureStatutLabel}</span>` : ''}
       </div>
 
-      <div class="detail-section">
-        <h4>Informations générales</h4>
-        <div class="detail-grid">
-          ${org ? `<div class="detail-row"><span class="detail-label">Organisme</span><span>${escHtml(org.nom)}</span></div>` : ''}
-          ${entreprises.length ? `<div class="detail-row"><span class="detail-label">Entreprise(s) formée(s)</span><span>${entreprises.map(e => escHtml(e.nom)).join(', ')}</span></div>` : ''}
-          <div class="detail-row"><span class="detail-label">Participants</span><span>${m.participants || 0}</span></div>
-          ${specialite ? `<div class="detail-row"><span class="detail-label">Spécialité (BPF)</span><span>${specialite.code} — ${escHtml(specialite.label)}</span></div>` : ''}
+      <!-- Infos générales -->
+      <div class="detail-section" data-gsap="section">
+        <div class="detail-section-header">
+          <span class="detail-section-icon">ℹ️</span>
+          <h4>Informations générales</h4>
+        </div>
+        <div class="detail-info-grid">
+          ${org ? `<div class="detail-info-block"><div class="detail-info-label">Organisme</div><div class="detail-info-value">${escHtml(org.nom)}</div></div>` : ''}
+          ${entreprises.length ? `<div class="detail-info-block"><div class="detail-info-label">Entreprise(s)</div><div class="detail-info-value">${entreprises.map(e => escHtml(e.nom)).join(', ')}</div></div>` : ''}
+          <div class="detail-info-block"><div class="detail-info-label">Participants</div><div class="detail-info-value">${m.participants || 0}</div></div>
+          ${specialite ? `<div class="detail-info-block detail-info-block-full"><div class="detail-info-label">Spécialité BPF</div><div class="detail-info-value">${specialite.code} — ${escHtml(specialite.label)}</div></div>` : ''}
         </div>
       </div>
 
-      <div class="detail-section">
-        <h4>Sessions — ${sessions.length} jour(s) · ${heures}h</h4>
-        <div class="detail-sessions">
-          ${sessions.map(s => `
-            <div class="detail-session-row">
-              <span>${formatDate(s.date)}</span>
-              <span>${s.heures}h</span>
-              ${s.distanciel ? '<span class="badge badge-info" style="font-size:0.68rem">distanciel</span>' : '<span></span>'}
+      <!-- Barre financière -->
+      <div class="detail-finance-bar" data-gsap="section">
+        <div class="detail-finance-item">
+          <span class="detail-finance-label">Tarif / jour</span>
+          <span class="detail-finance-value">${formatCurrency(m.tarif_journalier || 0)}</span>
+        </div>
+        ${m.frais_deplacement ? `<div class="detail-finance-item">
+          <span class="detail-finance-label">Frais déplacement</span>
+          <span class="detail-finance-value">${formatCurrency(m.frais_deplacement)}</span>
+        </div>` : ''}
+        <div class="detail-finance-item detail-finance-total">
+          <span class="detail-finance-label">Total HT</span>
+          <span class="detail-finance-value">${formatCurrency(total)}</span>
+        </div>
+      </div>
+
+      <!-- Timeline des sessions -->
+      <div class="detail-section" data-gsap="section">
+        <div class="detail-section-header">
+          <span class="detail-section-icon">📅</span>
+          <h4>Sessions — ${sessions.length} jour(s) · ${heures}h de formation</h4>
+        </div>
+        <div class="detail-timeline">
+          ${sessions.map((s, i) => `
+            <div class="detail-timeline-item" data-gsap="timeline-item">
+              <div class="timeline-connector${i === sessions.length - 1 ? ' timeline-last' : ''}">
+                <div class="timeline-dot${i === 0 ? ' timeline-dot-first' : ''}"></div>
+                <div class="timeline-line"></div>
+              </div>
+              <div class="timeline-content">
+                <span class="timeline-date">${formatDate(s.date)}</span>
+                <span class="timeline-hours">${s.heures}h</span>
+                ${s.distanciel ? '<span class="badge badge-info" style="font-size:0.68rem;padding:2px 7px">distanciel</span>' : ''}
+              </div>
             </div>`).join('')}
         </div>
       </div>
 
-      <div class="detail-section">
-        <h4>Financier</h4>
-        <div class="detail-grid">
-          <div class="detail-row"><span class="detail-label">Tarif journalier</span><span>${formatCurrency(m.tarif_journalier || 0)}</span></div>
-          ${m.frais_deplacement ? `<div class="detail-row"><span class="detail-label">Frais de déplacement</span><span>${formatCurrency(m.frais_deplacement)}</span></div>` : ''}
-          <div class="detail-row detail-row-total"><span class="detail-label">Total HT</span><span>${formatCurrency(total)}</span></div>
+      <!-- Documents -->
+      <div class="detail-section" data-gsap="section">
+        <div class="detail-section-header">
+          <span class="detail-section-icon">📎</span>
+          <h4>Documents</h4>
+        </div>
+
+        <!-- Contrat signé -->
+        <div class="detail-doc-category">
+          <span class="detail-doc-type-label">Contrat signé</span>
+          ${m.contrat
+            ? `<div class="detail-doc-row">
+                <div class="detail-doc-file">
+                  <span class="detail-doc-icon">📄</span>
+                  <div>
+                    <div class="detail-doc-filename">${escHtml(m.contrat.filename)}</div>
+                    ${m.contrat.uploaded_at ? `<div class="detail-doc-meta">Ajouté le ${formatDate(m.contrat.uploaded_at.split('T')[0])}</div>` : ''}
+                  </div>
+                </div>
+                <div class="detail-doc-actions">
+                  <button class="btn-preview-doc btn-secondary btn-sm" data-target="preview-contrat" data-drive-id="${m.contrat.drive_id}" data-mime="${escHtml(m.contrat.mime_type || 'application/pdf')}">👁 Prévisualiser</button>
+                  <a href="${m.contrat.web_view_link}" target="_blank" rel="noopener" class="btn-secondary btn-sm">⬡ Drive</a>
+                </div>
+              </div>
+              <div id="preview-contrat" class="doc-preview-panel hidden"></div>`
+            : '<p class="detail-doc-empty">Aucun contrat joint</p>'}
+        </div>
+
+        <!-- Fiche de présence -->
+        <div class="detail-doc-category">
+          <span class="detail-doc-type-label">Fiche de présence</span>
+          ${m.fiche_presence
+            ? `<div class="detail-doc-row">
+                <div class="detail-doc-file">
+                  <span class="detail-doc-icon">📋</span>
+                  <div>
+                    <div class="detail-doc-filename">${escHtml(m.fiche_presence.filename)}</div>
+                    ${m.fiche_presence.uploaded_at ? `<div class="detail-doc-meta">Ajoutée le ${formatDate(m.fiche_presence.uploaded_at.split('T')[0])}</div>` : ''}
+                  </div>
+                </div>
+                <div class="detail-doc-actions">
+                  <button class="btn-preview-doc btn-secondary btn-sm" data-target="preview-fiche" data-drive-id="${m.fiche_presence.drive_id}" data-mime="${escHtml(m.fiche_presence.mime_type || 'application/pdf')}">👁 Prévisualiser</button>
+                  <a href="${m.fiche_presence.web_view_link}" target="_blank" rel="noopener" class="btn-secondary btn-sm">⬡ Drive</a>
+                </div>
+              </div>
+              <div id="preview-fiche" class="doc-preview-panel hidden"></div>`
+            : '<p class="detail-doc-empty">Aucune fiche de présence jointe</p>'}
         </div>
       </div>
 
+      <!-- Facturation -->
+      ${facture ? `
+      <div class="detail-section" data-gsap="section">
+        <div class="detail-section-header">
+          <span class="detail-section-icon">🧾</span>
+          <h4>Facturation</h4>
+        </div>
+        <div class="detail-facture-card">
+          <div class="detail-facture-num">${escHtml(facture.num_facture || '—')}</div>
+          <div class="detail-facture-grid">
+            <div class="detail-info-block"><div class="detail-info-label">Émise le</div><div class="detail-info-value">${formatDate(facture.date_emission)}</div></div>
+            <div class="detail-info-block"><div class="detail-info-label">Échéance</div><div class="detail-info-value ${facture.statut !== 'payee' && facture.date_echeance < today ? 'text-danger' : ''}">${formatDate(facture.date_echeance)}</div></div>
+            <div class="detail-info-block"><div class="detail-info-label">Montant HT</div><div class="detail-info-value" style="color:var(--orange);font-size:1.1rem">${formatCurrency(facture.montant_ht)}</div></div>
+            ${facture.statut === 'payee' && facture.date_paiement ? `<div class="detail-info-block"><div class="detail-info-label">Payée le</div><div class="detail-info-value" style="color:#4ade80">${formatDate(facture.date_paiement)}</div></div>` : ''}
+          </div>
+          <span class="badge badge-${factureStatutClass}" style="margin-top:4px">${factureStatutLabel}</span>
+        </div>
+      </div>` : ''}
+
+      <!-- Notes -->
       ${m.notes ? `
-      <div class="detail-section">
-        <h4>Notes internes</h4>
+      <div class="detail-section" data-gsap="section">
+        <div class="detail-section-header">
+          <span class="detail-section-icon">📝</span>
+          <h4>Notes internes</h4>
+        </div>
         <p class="detail-notes">${escHtml(m.notes)}</p>
       </div>` : ''}
 
-      <div class="detail-section">
-        <h4>Document</h4>
-        ${m.contrat
-          ? `<div class="contrat-attached">
-              <div class="contrat-icon">📄</div>
-              <div class="contrat-info">
-                <div class="contrat-filename">${escHtml(m.contrat.filename)}</div>
-                ${m.contrat.uploaded_at ? `<div class="contrat-meta">Ajouté le ${formatDate(m.contrat.uploaded_at.split('T')[0])}</div>` : ''}
-              </div>
-              <a href="${m.contrat.web_view_link}" target="_blank" rel="noopener" class="btn-secondary btn-sm">👁 Consulter</a>
-            </div>`
-          : '<p class="empty-state" style="margin:0">Aucun contrat attaché à cette mission</p>'}
-      </div>
-
-      <div class="form-actions">
+      <!-- Actions -->
+      <div class="form-actions" style="margin-top:8px">
         <button type="button" class="btn-secondary" id="btn-detail-close">Fermer</button>
         <button type="button" class="btn-primary" id="btn-detail-edit" data-id="${m.id}">✏️ Modifier</button>
       </div>
@@ -251,8 +336,70 @@ function openMissionDetail(id) {
   const m = store.missions.find(x => x.id === id);
   if (!m) return;
   showModal(m.intitule || 'Détail de la mission', missionDetailHTML(m), 'modal-large');
+
   document.getElementById('btn-detail-close')?.addEventListener('click', closeModal);
   document.getElementById('btn-detail-edit')?.addEventListener('click', () => openMissionForm(id));
+
+  // Prévisualisation des documents
+  document.querySelectorAll('.btn-preview-doc').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const targetId = btn.dataset.target;
+      const driveId = btn.dataset.driveId;
+      const mime = btn.dataset.mime;
+      const panel = document.getElementById(targetId);
+      if (!panel) return;
+
+      if (!panel.classList.contains('hidden')) {
+        panel.classList.add('hidden');
+        panel.innerHTML = '';
+        btn.textContent = '👁 Prévisualiser';
+        return;
+      }
+
+      btn.textContent = '⏳ Chargement…';
+      btn.disabled = true;
+      panel.classList.remove('hidden');
+      panel.innerHTML = `<div class="doc-preview-loading"><div class="loading-spinner"></div><p>Chargement du document…</p></div>`;
+
+      try {
+        const blob = await fetchDriveBlob(driveId);
+        const url = URL.createObjectURL(blob);
+        if (mime.startsWith('image/')) {
+          panel.innerHTML = `<img src="${url}" class="doc-preview-img" alt="Document">`;
+        } else if (mime === 'application/pdf') {
+          panel.innerHTML = `<iframe src="${url}" class="doc-preview-iframe" title="Document"></iframe>`;
+        } else {
+          panel.innerHTML = `<div class="doc-preview-word"><span>📄</span><p>Prévisualisation non disponible pour ce format.</p><a href="${url}" download="${btn.closest('.detail-doc-row')?.querySelector('.detail-doc-filename')?.textContent || 'document'}" class="btn-secondary btn-sm">⬇️ Télécharger</a></div>`;
+        }
+        btn.textContent = '✕ Fermer';
+      } catch (e) {
+        panel.innerHTML = `<p class="doc-preview-error">Impossible de charger le document. <a href="#" class="doc-preview-retry" data-target="${targetId}" data-drive-id="${driveId}" data-mime="${mime}">Réessayer</a></p>`;
+        btn.textContent = '👁 Prévisualiser';
+      }
+      btn.disabled = false;
+    });
+  });
+
+  // Animations GSAP si disponible
+  if (window.gsap) {
+    gsap.from('[data-gsap="section"]', {
+      opacity: 0,
+      y: 18,
+      stagger: 0.07,
+      duration: 0.38,
+      ease: 'power2.out',
+      clearProps: 'all',
+    });
+    gsap.from('[data-gsap="timeline-item"]', {
+      opacity: 0,
+      x: -14,
+      stagger: 0.055,
+      duration: 0.3,
+      ease: 'power2.out',
+      delay: 0.18,
+      clearProps: 'all',
+    });
+  }
 }
 
 function isAnimation(type) {
@@ -365,6 +512,11 @@ function missionFormHTML(m = {}) {
         ${contratZoneHTML(m.contrat)}
       </div>
 
+      <div class="form-section-title">Fiche de présence</div>
+      <div class="form-group-full" id="fiche-zone-wrap">
+        ${ficheZoneHTML(m.fiche_presence)}
+      </div>
+
       <div class="form-group form-group-full">
         <label>Notes internes</label>
         <textarea name="notes" rows="3">${escHtml(m.notes || '')}</textarea>
@@ -424,17 +576,45 @@ function contratZoneHTML(contrat) {
     </div>`;
 }
 
+function ficheZoneHTML(fiche) {
+  if (fiche) {
+    const dateLabel = fiche.uploaded_at ? formatDate(fiche.uploaded_at.split('T')[0]) : '';
+    return `
+      <div class="contrat-attached">
+        <div class="contrat-icon">📋</div>
+        <div class="contrat-info">
+          <div class="contrat-filename">${escHtml(fiche.filename)}</div>
+          ${dateLabel ? `<div class="contrat-meta">Ajoutée le ${dateLabel}</div>` : ''}
+        </div>
+        <div class="contrat-actions">
+          <a href="${fiche.web_view_link}" target="_blank" rel="noopener" class="btn-secondary btn-sm">👁 Consulter</a>
+          <button type="button" class="btn-icon" id="btn-remove-fiche" title="Supprimer">🗑️</button>
+        </div>
+      </div>`;
+  }
+  return `
+    <div class="contrat-dropzone" id="fiche-dropzone">
+      <input type="file" id="fiche-file-input" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" hidden>
+      <div class="dropzone-icon">📋</div>
+      <p>Glissez-déposez la fiche de présence ici</p>
+      <p class="dropzone-sub">ou <span class="dropzone-link">cliquez pour parcourir</span> — PDF, image ou Word, 10 Mo max</p>
+    </div>`;
+}
+
 let sessionCount = 1;
 let currentContrat = null;
+let currentFiche = null;
 
 function openMissionForm(id = null) {
   const m = id ? store.missions.find(x => x.id === id) : null;
   sessionCount = m?.sessions?.length || 1;
   currentContrat = m?.contrat || null;
+  currentFiche = m?.fiche_presence || null;
   showModal(id ? 'Modifier la mission' : 'Nouvelle mission', missionFormHTML(m || {}), 'modal-large');
 
   document.getElementById('btn-cancel')?.addEventListener('click', closeModal);
   bindContratZoneEvents();
+  bindFicheZoneEvents();
 
   // Afficher/masquer les champs selon le type de prestation
   document.getElementById('select-type')?.addEventListener('change', e => {
@@ -513,6 +693,76 @@ function refreshContratZone() {
   bindContratZoneEvents();
 }
 
+function bindFicheZoneEvents() {
+  const dropzone = document.getElementById('fiche-dropzone');
+  if (dropzone) {
+    const input = document.getElementById('fiche-file-input');
+    dropzone.addEventListener('click', () => input.click());
+    input.addEventListener('change', () => {
+      if (input.files[0]) handleFicheFile(input.files[0]);
+    });
+    dropzone.addEventListener('dragover', e => {
+      e.preventDefault();
+      dropzone.classList.add('dragover');
+    });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file) handleFicheFile(file);
+    });
+  }
+
+  document.getElementById('btn-remove-fiche')?.addEventListener('click', async () => {
+    const ok = await confirm('Supprimer la fiche de présence attachée à cette mission ?');
+    if (!ok) return;
+    if (currentFiche?.drive_id) {
+      try { await deleteDriveFile(currentFiche.drive_id); } catch (e) { console.warn('Suppression fiche Drive échouée:', e); }
+    }
+    currentFiche = null;
+    refreshFicheZone();
+    toast('Fiche de présence supprimée');
+  });
+}
+
+function refreshFicheZone() {
+  const wrap = document.getElementById('fiche-zone-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = ficheZoneHTML(currentFiche);
+  bindFicheZoneEvents();
+}
+
+async function handleFicheFile(file) {
+  if (file.size > CONTRAT_MAX_SIZE) {
+    toast('Fichier trop volumineux (10 Mo max)', 'error');
+    return;
+  }
+  if (!CONTRAT_ALLOWED_TYPES.includes(file.type)) {
+    toast('Format non supporté — utilisez un PDF, une image ou un document Word', 'error');
+    return;
+  }
+
+  const wrap = document.getElementById('fiche-zone-wrap');
+  wrap.innerHTML = `<div class="contrat-dropzone contrat-uploading"><div class="loading-spinner"></div><p>Envoi de la fiche…</p></div>`;
+
+  try {
+    const result = await uploadFiche(file.name, file, file.type);
+    currentFiche = {
+      drive_id: result.id,
+      filename: file.name,
+      web_view_link: result.webViewLink,
+      mime_type: file.type,
+      uploaded_at: new Date().toISOString(),
+    };
+    toast('Fiche de présence ajoutée ✓');
+  } catch (e) {
+    console.error('Upload fiche échoué:', e);
+    toast('Erreur lors de l\'envoi de la fiche', 'error');
+  }
+  refreshFicheZone();
+}
+
 async function handleContratFile(file) {
   if (file.size > CONTRAT_MAX_SIZE) {
     toast('Fichier trop volumineux (10 Mo max)', 'error');
@@ -583,6 +833,7 @@ async function saveMissionForm(form, id) {
     notes: fd.get('notes') || '',
     sessions,
     contrat: currentContrat,
+    fiche_presence: currentFiche,
   };
 
   let savedMissionId;
@@ -648,6 +899,9 @@ async function deleteMission(id) {
   const mission = store.missions.find(m => m.id === id);
   if (mission?.contrat?.drive_id) {
     try { await deleteDriveFile(mission.contrat.drive_id); } catch (e) { console.warn('Suppression contrat Drive échouée:', e); }
+  }
+  if (mission?.fiche_presence?.drive_id) {
+    try { await deleteDriveFile(mission.fiche_presence.drive_id); } catch (e) { console.warn('Suppression fiche Drive échouée:', e); }
   }
   store.missions = store.missions.filter(m => m.id !== id);
   await saveMissions();
