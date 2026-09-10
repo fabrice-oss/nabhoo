@@ -28,12 +28,12 @@ export async function sendFactureToPennylane(facture, mission) {
 
   if (window.PDFLib) {
     try {
-      const { PDFDocument, AFRelationship, PDFName, PDFString } = window.PDFLib;
+      const { PDFDocument, AFRelationship, PDFName } = window.PDFLib;
       const pdfBytes = await pdfBlob.arrayBuffer();
       const xmlBytes = new TextEncoder().encode(xml);
       const pdfDoc   = await PDFDocument.load(pdfBytes);
 
-      // Embed XML with proper AFRelationship=Data required by Factur-X spec
+      // Embed XML avec AFRelationship=Data (requis Factur-X)
       await pdfDoc.attach(xmlBytes, 'factur-x.xml', {
         mimeType: 'application/xml',
         description: 'Factur-X EN 16931',
@@ -41,42 +41,46 @@ export async function sendFactureToPennylane(facture, mission) {
         modificationDate: new Date(),
         afRelationship: AFRelationship?.Data,
       });
+      console.log('[FX] attach OK — AFRelationship:', AFRelationship?.Data);
 
-      // Add XMP metadata declaring PDF/A-3b + Factur-X compliance
-      const xmpData = [
-        '<?xpacket begin="\xef\xbb\xbf" id="W5M0MpCehiHzreSzNTczkc9d"?>',
-        '<x:xmpmeta xmlns:x="adobe:ns:meta/">',
-        '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
-        '<rdf:Description rdf:about=""',
-        '    xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/"',
-        '    xmlns:fx="urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#">',
-        '<pdfaid:part>3</pdfaid:part>',
-        '<pdfaid:conformance>B</pdfaid:conformance>',
-        '<fx:DocumentType>INVOICE</fx:DocumentType>',
-        '<fx:DocumentFileName>factur-x.xml</fx:DocumentFileName>',
-        '<fx:Version>1.0</fx:Version>',
-        '<fx:ConformanceLevel>EN 16931</fx:ConformanceLevel>',
-        '</rdf:Description>',
-        '</rdf:RDF>',
-        '</x:xmpmeta>',
-        '<?xpacket end="w"?>',
-      ].join('\n');
-
-      if (PDFName && PDFString) {
+      // XMP metadata PDF/A-3b + Factur-X (best-effort, n'annule pas l'envoi si ça échoue)
+      try {
+        const xmpData = [
+          '<?xpacket begin="\xef\xbb\xbf" id="W5M0MpCehiHzreSzNTczkc9d"?>',
+          '<x:xmpmeta xmlns:x="adobe:ns:meta/">',
+          '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
+          '<rdf:Description rdf:about=""',
+          '    xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/"',
+          '    xmlns:fx="urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#">',
+          '<pdfaid:part>3</pdfaid:part>',
+          '<pdfaid:conformance>B</pdfaid:conformance>',
+          '<fx:DocumentType>INVOICE</fx:DocumentType>',
+          '<fx:DocumentFileName>factur-x.xml</fx:DocumentFileName>',
+          '<fx:Version>1.0</fx:Version>',
+          '<fx:ConformanceLevel>EN 16931</fx:ConformanceLevel>',
+          '</rdf:Description>',
+          '</rdf:RDF>',
+          '</x:xmpmeta>',
+          '<?xpacket end="w"?>',
+        ].join('\n');
         const xmpBytes = new TextEncoder().encode(xmpData);
-        const metaStream = pdfDoc.context.stream(xmpBytes, {
+        const metaStream = pdfDoc.context.flateStream(xmpBytes, {
           Type: PDFName.of('Metadata'),
           Subtype: PDFName.of('XML'),
         });
         const metaRef = pdfDoc.context.register(metaStream);
         pdfDoc.catalog.set(PDFName.of('Metadata'), metaRef);
+        console.log('[FX] XMP metadata OK');
+      } catch (xmpErr) {
+        console.warn('[FX] XMP metadata échouée (PDF envoyé sans XMP) :', xmpErr);
       }
 
       const combined = await pdfDoc.save();
       fileToSend = new Blob([combined], { type: 'application/pdf' });
       filename   = `${facture.numero}.pdf`;
+      console.log('[FX] PDF final :', combined.byteLength, 'bytes');
     } catch (e) {
-      console.warn('pdf-lib embedding échoué, envoi XML seul :', e);
+      console.warn('[FX] pdf-lib échoué, envoi XML seul :', e);
     }
   }
 
