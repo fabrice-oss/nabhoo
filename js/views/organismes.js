@@ -118,7 +118,7 @@ function organisme_form(o = {}) {
       </div>
       <div class="form-group">
         <label>ID client Pennylane <span style="font-weight:400;color:var(--text-muted)">(facultatif — liaison facturation électronique)</span></label>
-        <input type="text" name="pennylane_customer_id" value="${escHtml(o.pennylane_customer_id || '')}" placeholder="Ex : cus_XXXXXXXXXXXX">
+        <input type="number" name="pennylane_customer_id" value="${escHtml(o.pennylane_customer_id || '')}" placeholder="Ex : 29359435 (nombre entier)">
       </div>
       <div class="form-section-title">Document</div>
       <div class="form-group-full" id="doc-zone-wrap">

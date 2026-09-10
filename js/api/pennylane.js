@@ -50,7 +50,10 @@ export async function sendFactureToPennylane(facture, mission) {
   const fd = new FormData();
   fd.append('file', fileToSend, filename);
   if (org.pennylane_customer_id) {
-    fd.append('invoice_options', JSON.stringify({ customer_id: org.pennylane_customer_id }));
+    const customerId = parseInt(org.pennylane_customer_id, 10);
+    if (!isNaN(customerId)) {
+      fd.append('invoice_options', JSON.stringify({ customer_id: customerId }));
+    }
   }
 
   const res = await fetch(`${BASE}/customer_invoices/e_invoices/imports`, {
