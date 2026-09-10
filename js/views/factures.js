@@ -3,6 +3,7 @@ import { uuid, toast, escHtml, confirm, formatDate, formatCurrency, nextInvoiceN
 import { showModal, closeModal, navigate } from '../app.js';
 import { generateInvoicePDF } from '../pdf.js';
 import { uploadPDF } from '../api/drive.js';
+import { sendFactureToPennylane } from '../api/pennylane.js';
 
 export function render(params = {}) {
   if (params.action === 'new' && params.missionId) {
@@ -71,6 +72,7 @@ function renderFacturesList(filter) {
                 <td>${f.statut === 'payee' && f.date_paiement ? formatDate(f.date_paiement) : '—'}</td>
                 <td class="actions">
                   <button class="btn-icon btn-pdf" data-id="${f.id}" title="Générer et télécharger le PDF">📄</button>
+                  <button class="btn-icon btn-pennylane" data-id="${f.id}" title="${f.pennylane_id ? 'Déjà envoyée sur Pennylane' : 'Envoyer sur Pennylane'}" ${f.pennylane_id ? 'style="opacity:.45"' : ''}>📤</button>
                   <button class="btn-icon btn-edit-facture" data-id="${f.id}" title="Modifier la facture">✏️</button>
                   ${f.statut === 'en_attente'
                     ? `<button class="btn-icon btn-mark-paid" data-id="${f.id}" title="Marquer comme payée">✅</button>`
@@ -84,6 +86,7 @@ function renderFacturesList(filter) {
       </div>
       <div class="table-legend">
         <span>📄 Générer PDF</span>
+        <span>📤 Envoyer Pennylane</span>
         <span>✏️ Modifier</span>
         <span>✅ Marquer payée</span>
         <span>🗑️ Supprimer</span>
@@ -109,6 +112,8 @@ export function init(params = {}) {
 function attachFactureEvents() {
   document.querySelectorAll('.btn-pdf').forEach(btn =>
     btn.addEventListener('click', () => downloadPDF(btn.dataset.id)));
+  document.querySelectorAll('.btn-pennylane').forEach(btn =>
+    btn.addEventListener('click', () => sendPennylane(btn.dataset.id)));
   document.querySelectorAll('.btn-edit-facture').forEach(btn =>
     btn.addEventListener('click', () => openEditFactureForm(btn.dataset.id)));
   document.querySelectorAll('.btn-mark-paid').forEach(btn =>
@@ -303,6 +308,28 @@ async function downloadPDF(id) {
   } catch (e) {
     console.error(e);
     toast('Erreur lors de la génération du PDF', 'error');
+  }
+}
+
+async function sendPennylane(id) {
+  const facture = store.factures.find(f => f.id === id);
+  if (!facture) return;
+  const mission = getMission(facture.mission_id);
+  if (!mission) { toast('Mission introuvable', 'error'); return; }
+
+  if (facture.pennylane_id) {
+    toast(`Déjà envoyée (ID Pennylane : ${facture.pennylane_id})`, 'warning');
+    return;
+  }
+
+  toast('Envoi sur Pennylane en cours…');
+  try {
+    const data = await sendFactureToPennylane(facture, mission);
+    toast(`Facture envoyée sur Pennylane ✓ (ID : ${data.invoice?.id || data.id || '—'})`, 'success');
+    navigate('factures');
+  } catch (e) {
+    console.error('Pennylane envoi échoué :', e);
+    toast(`Erreur Pennylane : ${e.message}`, 'error');
   }
 }
 

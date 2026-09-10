@@ -75,6 +75,16 @@ export function render() {
         </div>
 
         <div class="glass-card settings-section">
+          <h3>⚡ Facturation électronique (Pennylane)</h3>
+          <div class="form-grid">
+            <div class="form-group form-group-full">
+              <label>Token API Pennylane <span style="font-weight:400;color:var(--text-muted)">(Paramètres → Connectivité → Développeurs)</span></label>
+              <input type="password" name="pennylane_token" value="${escHtml(s.pennylane_token || '')}" placeholder="IKuuh…" autocomplete="off">
+            </div>
+          </div>
+        </div>
+
+        <div class="glass-card settings-section">
           <h3>📅 Google Calendar</h3>
           <div class="form-grid">
             <div class="form-group">
@@ -163,6 +173,7 @@ export function init() {
       banque: fd.get('banque'),
       iban: fd.get('iban'),
       bic: fd.get('bic'),
+      pennylane_token: fd.get('pennylane_token') || store.settings.pennylane_token || '',
       calendar_id: fd.get('calendar_id') || store.settings.calendar_id,
       facturation: {
         prefixe: fd.get('facturation_prefixe') || 'AF',
