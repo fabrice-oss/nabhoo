@@ -2,7 +2,10 @@ import { store, saveFactures } from '../data.js';
 import { generateFacturXML } from '../facturx.js';
 import { generateInvoicePDF } from '../pdf.js';
 
-const BASE = 'https://app.pennylane.com/api/external/v2';
+// Proxy Cloudflare Worker — remplace l'appel direct bloqué par CORS
+// Mettre à jour après déploiement : https://nabhoo-pennylane.TON_COMPTE.workers.dev
+const PROXY = 'https://nabhoo-pennylane.fabriceavrila.workers.dev';
+const BASE  = `${PROXY}/api/external/v2`;
 
 function getToken() {
   return store.settings.pennylane_token || '';
