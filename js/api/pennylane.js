@@ -48,9 +48,8 @@ export async function sendFactureToPennylane(facture, mission) {
       : (dates[0] || '');
 
     const line = {
-      label: `Animation de formation : ${mission.intitule || 'Formation'}${sessionDates ? ' — Sessions : ' + sessionDates : ''} (${nb} j × ${tarif} €)`,
+      label: `Animation de formation : ${mission.intitule || 'Formation'} (${nb} j x ${tarif} EUR)`,
       raw_currency_unit_price: String((nb * tarif).toFixed(2)),
-      substance: 'services',
     };
     if (vat) line.vat_rate = vat;
     invoiceLines.push(line);
@@ -58,9 +57,8 @@ export async function sendFactureToPennylane(facture, mission) {
 
   if (mission.frais_deplacement > 0) {
     const line = {
-      label: 'Frais de déplacement',
+      label: 'Frais de deplacement',
       raw_currency_unit_price: String(Number(mission.frais_deplacement).toFixed(2)),
-      substance: 'services',
     };
     if (vat) line.vat_rate = vat;
     invoiceLines.push(line);
@@ -74,13 +72,8 @@ export async function sendFactureToPennylane(facture, mission) {
     deadline:      facture.date_echeance,
     customer_id:   customerId,
     draft:         true,
-    currency:      'EUR',
     invoice_lines: invoiceLines,
   };
-
-  if (tauxTVA === 0 && s.facturation?.mention_tva) {
-    body.special_mention = s.facturation.mention_tva;
-  }
 
   // ── 1. Créer la facture draft via JSON ───────────────────────────────────
   console.log('[Pennylane] body envoyé :', JSON.stringify(body, null, 2));
