@@ -46,8 +46,12 @@ export async function sendFactureToPennylane(facture, mission) {
   }
 
   // 4. Envoi multipart/form-data
+  const org = store.organismes.find(o => o.id === mission.organisme_id) || {};
   const fd = new FormData();
   fd.append('file', fileToSend, filename);
+  if (org.pennylane_customer_id) {
+    fd.append('invoice_options', JSON.stringify({ customer_id: org.pennylane_customer_id }));
+  }
 
   const res = await fetch(`${BASE}/customer_invoices/e_invoices/imports`, {
     method: 'POST',

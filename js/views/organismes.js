@@ -116,6 +116,10 @@ function organisme_form(o = {}) {
         <label>SIRET</label>
         <input type="text" name="siret" value="${escHtml(o.siret || '')}">
       </div>
+      <div class="form-group">
+        <label>ID client Pennylane <span style="font-weight:400;color:var(--text-muted)">(facultatif — liaison facturation électronique)</span></label>
+        <input type="text" name="pennylane_customer_id" value="${escHtml(o.pennylane_customer_id || '')}" placeholder="Ex : cus_XXXXXXXXXXXX">
+      </div>
       <div class="form-section-title">Document</div>
       <div class="form-group-full" id="doc-zone-wrap">
         ${docZoneHTML(o.document)}
