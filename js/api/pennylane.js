@@ -28,15 +28,50 @@ export async function sendFactureToPennylane(facture, mission) {
 
   if (window.PDFLib) {
     try {
+      const { PDFDocument, AFRelationship, PDFName, PDFString } = window.PDFLib;
       const pdfBytes = await pdfBlob.arrayBuffer();
       const xmlBytes = new TextEncoder().encode(xml);
-      const pdfDoc   = await window.PDFLib.PDFDocument.load(pdfBytes);
+      const pdfDoc   = await PDFDocument.load(pdfBytes);
+
+      // Embed XML with proper AFRelationship=Data required by Factur-X spec
       await pdfDoc.attach(xmlBytes, 'factur-x.xml', {
         mimeType: 'application/xml',
         description: 'Factur-X EN 16931',
         creationDate: new Date(),
         modificationDate: new Date(),
+        afRelationship: AFRelationship?.Data,
       });
+
+      // Add XMP metadata declaring PDF/A-3b + Factur-X compliance
+      const xmpData = [
+        '<?xpacket begin="\xef\xbb\xbf" id="W5M0MpCehiHzreSzNTczkc9d"?>',
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/">',
+        '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
+        '<rdf:Description rdf:about=""',
+        '    xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/"',
+        '    xmlns:fx="urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#">',
+        '<pdfaid:part>3</pdfaid:part>',
+        '<pdfaid:conformance>B</pdfaid:conformance>',
+        '<fx:DocumentType>INVOICE</fx:DocumentType>',
+        '<fx:DocumentFileName>factur-x.xml</fx:DocumentFileName>',
+        '<fx:Version>1.0</fx:Version>',
+        '<fx:ConformanceLevel>EN 16931</fx:ConformanceLevel>',
+        '</rdf:Description>',
+        '</rdf:RDF>',
+        '</x:xmpmeta>',
+        '<?xpacket end="w"?>',
+      ].join('\n');
+
+      if (PDFName && PDFString) {
+        const xmpBytes = new TextEncoder().encode(xmpData);
+        const metaStream = pdfDoc.context.stream(xmpBytes, {
+          Type: PDFName.of('Metadata'),
+          Subtype: PDFName.of('XML'),
+        });
+        const metaRef = pdfDoc.context.register(metaStream);
+        pdfDoc.catalog.set(PDFName.of('Metadata'), metaRef);
+      }
+
       const combined = await pdfDoc.save();
       fileToSend = new Blob([combined], { type: 'application/pdf' });
       filename   = `${facture.numero}.pdf`;
