@@ -318,8 +318,13 @@ async function sendPennylane(id) {
   if (!mission) { toast('Mission introuvable', 'error'); return; }
 
   if (facture.pennylane_id) {
-    toast(`Déjà envoyée (ID Pennylane : ${facture.pennylane_id})`, 'warning');
-    return;
+    const ok = await confirm(`Déjà envoyée (ID : ${facture.pennylane_id}). Renvoyer quand même ?`);
+    if (!ok) return;
+    // Réinitialise l'ID pour permettre le renvoi
+    const idx = store.factures.findIndex(f => f.id === id);
+    delete store.factures[idx].pennylane_id;
+    delete store.factures[idx].pennylane_sent_at;
+    facture.pennylane_id = null;
   }
 
   toast('Envoi sur Pennylane en cours…');
