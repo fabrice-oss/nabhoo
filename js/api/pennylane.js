@@ -43,7 +43,7 @@ export async function sendFactureToPennylane(facture, mission) {
     lineItems.push({
       label: `Animation de formation : ${mission.intitule || 'Formation'}${sessionDates ? ' — ' + sessionDates : ''}`,
       quantity: nb,
-      unit_price_before_tax: tarif,
+      unit_price: tarif,
       vat_rate: vatCode(tauxTVA),
     });
   }
@@ -52,7 +52,7 @@ export async function sendFactureToPennylane(facture, mission) {
     lineItems.push({
       label: 'Frais de déplacement',
       quantity: 1,
-      unit_price_before_tax: Number(mission.frais_deplacement),
+      unit_price: Number(mission.frais_deplacement),
       vat_rate: vatCode(tauxTVA),
     });
   }
@@ -61,11 +61,10 @@ export async function sendFactureToPennylane(facture, mission) {
 
   // ── Corps de la requête ──────────────────────────────────────────────────
   const body = {
-    invoice_number: facture.numero,
-    date:           facture.date_emission,
-    deadline:       facture.date_echeance,
-    currency:       'EUR',
-    line_items_attributes: lineItems,
+    date:     facture.date_emission,
+    deadline: facture.date_echeance,
+    currency: 'EUR',
+    line_items: lineItems,
   };
 
   const customerId = parseInt(org.pennylane_customer_id, 10);
