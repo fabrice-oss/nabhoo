@@ -798,15 +798,12 @@ async function saveMissionForm(form, id) {
   const previousStatut = id ? store.missions.find(x => x.id === id)?.statut : null;
 
   const sessions = [];
-  let i = 0;
-  while (fd.has(`sessions[${i}][date]`)) {
-    sessions.push({
-      date: fd.get(`sessions[${i}][date]`),
-      heures: parseInt(fd.get(`sessions[${i}][heures]`)) || 7,
-      distanciel: fd.get(`sessions[${i}][distanciel]`) === 'true',
-    });
-    i++;
-  }
+  document.querySelectorAll('#sessions-container .session-row').forEach(row => {
+    const date = row.querySelector('[name$="[date]"]')?.value;
+    const heures = parseInt(row.querySelector('[name$="[heures]"]')?.value) || 7;
+    const distanciel = row.querySelector('[name$="[distanciel]"]')?.checked || false;
+    if (date) sessions.push({ date, heures, distanciel });
+  });
   sessions.sort((a, b) => a.date.localeCompare(b.date));
 
   const type = fd.get('type');
