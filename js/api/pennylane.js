@@ -83,6 +83,8 @@ export async function sendFactureToPennylane(facture, mission) {
   }
 
   // ── 1. Créer la facture draft via JSON ───────────────────────────────────
+  console.log('[Pennylane] body envoyé :', JSON.stringify(body, null, 2));
+
   const res = await fetch(`${BASE}/customer_invoices`, {
     method: 'POST',
     headers: {
@@ -94,6 +96,7 @@ export async function sendFactureToPennylane(facture, mission) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    console.error('[Pennylane] réponse erreur :', JSON.stringify(err, null, 2));
     const msg = err.message || (err.errors && JSON.stringify(err.errors)) || `Pennylane ${res.status}`;
     throw new Error(msg);
   }
