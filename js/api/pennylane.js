@@ -49,7 +49,8 @@ export async function sendFactureToPennylane(facture, mission) {
 
     const line = {
       label: `Animation de formation : ${mission.intitule || 'Formation'} (${nb} j x ${tarif} EUR)`,
-      raw_currency_unit_price: String((nb * tarif).toFixed(2)),
+      quantity:                  1,
+      raw_currency_unit_price:   String((nb * tarif).toFixed(2)),
     };
     if (vat) line.vat_rate = vat;
     invoiceLines.push(line);
@@ -57,7 +58,8 @@ export async function sendFactureToPennylane(facture, mission) {
 
   if (mission.frais_deplacement > 0) {
     const line = {
-      label: 'Frais de deplacement',
+      label:                   'Frais de deplacement',
+      quantity:                1,
       raw_currency_unit_price: String(Number(mission.frais_deplacement).toFixed(2)),
     };
     if (vat) line.vat_rate = vat;
