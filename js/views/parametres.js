@@ -147,7 +147,6 @@ export function init() {
         client_type: 'organisme', client_id: orgId,
       };
       store.settings.pennylane_import_test = test;
-      await saveSettings();
       const mission = {
         organisme_id: orgId, type: 'animation', intitule: 'TEST IMPORT PDF - NE PAS ENVOYER',
         sessions: [{ date, heures: 1 }], tarif_journalier: 1, frais_deplacement: 0,
