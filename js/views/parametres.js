@@ -137,17 +137,17 @@ export function init() {
     output.textContent = 'Test en cours : génération du PDF personnalisé, téléversement et demande de conversion Factur-X…';
     try {
       const date = isoToday();
-      let test = store.settings.pennylane_import_test;
-      if (test && test.organisme_id !== orgId) throw new Error('Un test existe déjà pour un autre organisme.');
-      if (!test) {
-        const id = `test-import-${crypto.randomUUID()}`;
-        test = {
-          id, numero: `TEST-NABHOO-${id.slice(-8)}`, date_emission: date, date_echeance: date,
-          montant_ht: 1, tva_taux: 0, organisme_id: orgId,
-          client_type: 'organisme', client_id: orgId,
-        };
-        store.settings.pennylane_import_test = test;
-      }
+      // Chaque clic doit créer un document neuf : réutiliser l'identifiant du
+      // test précédent empêcherait de contrôler une nouvelle conversion après
+      // une modification des paramètres Pennylane.
+      const id = `test-import-${crypto.randomUUID()}`;
+      const test = {
+        id, numero: `TEST-NABHOO-${id.slice(-8)}`, date_emission: date, date_echeance: date,
+        montant_ht: 1, tva_taux: 0, organisme_id: orgId,
+        client_type: 'organisme', client_id: orgId,
+      };
+      store.settings.pennylane_import_test = test;
+      await saveSettings();
       const mission = {
         organisme_id: orgId, type: 'animation', intitule: 'TEST IMPORT PDF - NE PAS ENVOYER',
         sessions: [{ date, heures: 1 }], tarif_journalier: 1, frais_deplacement: 0,
