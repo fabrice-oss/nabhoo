@@ -1,6 +1,7 @@
 import { store, saveSettings } from '../data.js';
-import { toast, escHtml } from '../utils.js';
+import { toast, escHtml, isoToday } from '../utils.js';
 import { listCalendars } from '../api/calendar.js';
+import { sendFactureToPennylane, verifyPennylaneDraft } from '../api/pennylane.js';
 
 export function render() {
   const s = store.settings;
@@ -81,6 +82,16 @@ export function render() {
               <label>Token API Pennylane <span style="font-weight:400;color:var(--text-muted)">(Paramètres → Connectivité → Développeurs)</span></label>
               <input type="password" name="pennylane_token" value="${escHtml(s.pennylane_token || '')}" placeholder="IKuuh…" autocomplete="off">
             </div>
+            <div class="form-group form-group-full">
+              <label for="pennylane-test-org">Client pour le test Pennylane (utilisez de préférence votre Sandbox)</label>
+              <select id="pennylane-test-org">
+                <option value="">Choisir un organisme configuré</option>
+                ${store.organismes.filter(o => o.pennylane_customer_id).map(o => `<option value="${escHtml(o.id)}">${escHtml(o.nom)}</option>`).join('')}
+              </select>
+              <p>Crée un brouillon TEST de 1 € avec PDF, sans finalisation ni envoi au client. Aucun ajout au chiffre d’affaires NABHOO. Utilise le token déjà enregistré.</p>
+              <button type="button" class="btn-secondary" id="btn-test-pennylane">Tester avec un brouillon de 1 €</button>
+              <p id="pennylane-test-result" role="status" aria-live="polite"></p>
+            </div>
           </div>
         </div>
 
@@ -110,6 +121,34 @@ export function render() {
 }
 
 export function init() {
+  document.getElementById('btn-test-pennylane')?.addEventListener('click', async e => {
+    const btn = e.currentTarget;
+    const output = document.getElementById('pennylane-test-result');
+    const orgId = document.getElementById('pennylane-test-org').value;
+    if (!orgId) { output.textContent = 'Choisissez un organisme pour le test.'; return; }
+    btn.disabled = true;
+    output.textContent = 'Test en cours : création du brouillon, pièce jointe puis vérification…';
+    try {
+      const date = isoToday();
+      let test = store.settings.pennylane_test;
+      if (test && test.organisme_id !== orgId) throw new Error('Un test existe déjà pour un autre organisme. Sélectionnez cet organisme pour le reprendre.');
+      if (!test) {
+        const id = `test-${crypto.randomUUID()}`;
+        test = { id, numero: `TEST-NABHOO-${id.slice(-8)}`, date_emission: date, date_echeance: date, tva_taux: 0, organisme_id: orgId };
+        store.settings.pennylane_test = test;
+        await saveSettings();
+      }
+      const mission = { organisme_id: orgId, intitule: 'TEST TECHNIQUE — NE PAS FINALISER NI ENVOYER', sessions: [{ date: test.date_emission, heures: 1 }], tarif_journalier: 1, frais_deplacement: 0 };
+      let result;
+      try { result = await sendFactureToPennylane(test, mission); }
+      finally { await saveSettings(); }
+      if (result.nabhoo_warning) throw new Error(result.nabhoo_warning);
+      const verified = await verifyPennylaneDraft(test.pennylane_id);
+      output.textContent = `Test réussi : brouillon ${test.pennylane_id}, montant ${verified.amount} €, PDF présent. Aucune facture envoyée au client. Le brouillon TEST reste dans Pennylane.`;
+    } catch (error) {
+      output.textContent = `Test non validé : ${error.message}`;
+    } finally { btn.disabled = false; }
+  });
 
   // ── Upload logo ────────────────────────────────────────────────────────────
   document.getElementById('logo-file-input')?.addEventListener('change', async (e) => {

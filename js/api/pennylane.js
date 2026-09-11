@@ -3,32 +3,57 @@ import { generateInvoicePDF } from '../pdf.js';
 
 const PROXY = 'https://nabhoo-pennylane.fabriceavrila.workers.dev';
 const BASE  = `${PROXY}/api/external/v2`;
+const pending = new Set();
 
 function getToken() {
   return store.settings.pennylane_token || '';
 }
 
+export async function verifyPennylaneDraft(id) {
+  const headers = { Authorization: `Bearer ${getToken()}` };
+  const invoice = await fetch(`${BASE}/customer_invoices/${id}`, { headers });
+  if (!invoice.ok) throw new Error(`Vérification du brouillon : HTTP ${invoice.status}`);
+  const data = await invoice.json();
+  if (data.draft !== true) throw new Error('Le document Pennylane n’est pas un brouillon : ne pas poursuivre le test.');
+  const attachments = await fetch(`${BASE}/customer_invoices/${id}/appendices`, { headers });
+  if (!attachments.ok) throw new Error(`Vérification PDF : HTTP ${attachments.status}`);
+  const files = await attachments.json();
+  if (!files.items?.length) throw new Error('Aucun PDF confirmé dans Pennylane.');
+  return { amount: data.currency_amount || data.amount };
+}
+
 // Codes TVA Pennylane (format FR_XXX où XXX = taux × 10)
-// TVA 0% (exempt art. 293 B) → pas de champ vat_rate envoyé
+// Les lignes standard exigent un code TVA, même sans TVA facturée.
 function vatCode(taux) {
-  const t = Number(taux || 0);
+  const t = Number(taux);
+  if (t === 0) return 'exempt';
   if (t === 20)  return 'FR_200';
   if (t === 10)  return 'FR_100';
   if (t === 8.5) return 'FR_85';
   if (t === 5.5) return 'FR_55';
   if (t === 2.1) return 'FR_21';
-  return null; // 0% = TVA non applicable → omettre le champ
+  throw new Error(`Taux de TVA non pris en charge par l’intégration Pennylane : ${taux}. Vérifiez la facture.`);
 }
 
 export async function sendFactureToPennylane(facture, mission) {
+  if (pending.has(facture.id)) throw new Error('Envoi déjà en cours pour cette facture.');
+  pending.add(facture.id);
+  try {
+    return await sendDraft(facture, mission);
+  } finally {
+    pending.delete(facture.id);
+  }
+}
+
+async function sendDraft(facture, mission) {
   const token = getToken();
   if (!token) throw new Error('Token Pennylane non configuré — rendez-vous dans Paramètres.');
 
   const s   = store.settings;
   const org = store.organismes.find(o => o.id === mission.organisme_id) || {};
 
-  const customerId = parseInt(org.pennylane_customer_id, 10);
-  if (isNaN(customerId)) throw new Error('ID client Pennylane manquant — renseignez-le dans la fiche organisme.');
+  const customerId = Number(org.pennylane_customer_id);
+  if (!Number.isSafeInteger(customerId) || customerId <= 0) throw new Error('ID client Pennylane invalide — renseignez-le dans la fiche organisme.');
 
   const sessions = mission.sessions || [];
   const nb       = sessions.length;
@@ -50,9 +75,10 @@ export async function sendFactureToPennylane(facture, mission) {
     const line = {
       label: `Animation de formation : ${mission.intitule || 'Formation'} (${nb} j x ${tarif} EUR)`,
       quantity:                  1,
+      unit:                      'piece',
+      vat_rate:                  vat,
       raw_currency_unit_price:   String((nb * tarif).toFixed(2)),
     };
-    if (vat) line.vat_rate = vat;
     invoiceLines.push(line);
   }
 
@@ -60,9 +86,10 @@ export async function sendFactureToPennylane(facture, mission) {
     const line = {
       label:                   'Frais de deplacement',
       quantity:                1,
+      unit:                    'piece',
+      vat_rate:                vat,
       raw_currency_unit_price: String(Number(mission.frais_deplacement).toFixed(2)),
     };
-    if (vat) line.vat_rate = vat;
     invoiceLines.push(line);
   }
 
@@ -75,53 +102,66 @@ export async function sendFactureToPennylane(facture, mission) {
     customer_id:   customerId,
     draft:         true,
     invoice_lines: invoiceLines,
+    external_reference: `nabhoo-${facture.id}`,
+    pdf_invoice_subject: facture.numero,
   };
 
-  // ── 1. Créer la facture draft via JSON ───────────────────────────────────
-  console.log('[Pennylane] body envoyé :', JSON.stringify(body, null, 2));
+  // Ne pas recréer une facture dont l'identifiant est déjà connu.
+  let data = { id: facture.pennylane_id };
+  if (!facture.pennylane_id) {
+    const res = await fetch(`${BASE}/customer_invoices`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
 
-  const res = await fetch(`${BASE}/customer_invoices`, {
-    method: 'POST',
-    headers: {
-      Authorization:  `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      const msg = err.message || err.error || (err.errors && JSON.stringify(err.errors)) || 'Requête refusée';
+      throw new Error(`Pennylane ${res.status}${err.code ? ` (${err.code})` : ''} : ${msg}`);
+    }
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    console.error('[Pennylane] réponse erreur :', JSON.stringify(err, null, 2));
-    const msg = err.message || (err.errors && JSON.stringify(err.errors)) || `Pennylane ${res.status}`;
-    throw new Error(msg);
+    data = await res.json();
+  }
+  const invoiceId = data.invoice?.id || data.id;
+  if (!invoiceId) throw new Error('Réponse Pennylane sans identifiant. Vérifiez Pennylane avant toute nouvelle tentative.');
+
+  const idx = store.factures.findIndex(f => f.id === facture.id);
+  facture.pennylane_id = invoiceId;
+  if (idx !== -1) {
+    store.factures[idx].pennylane_id = invoiceId;
+    store.factures[idx].pennylane_sent_at = new Date().toISOString();
+    // Sauvegarder avant la pièce jointe pour permettre une reprise sans doublon.
+    await saveFactures();
   }
 
-  const data      = await res.json();
-  const invoiceId = data.invoice?.id || data.id;
-
   // ── 2. Attacher le PDF NABHOO en appendice ───────────────────────────────
-  if (invoiceId) {
+  if (!facture.pennylane_pdf_attached) {
     try {
       const pdfBlob = await generateInvoicePDF(facture, mission);
       const fdPdf   = new FormData();
       fdPdf.append('file', pdfBlob, `${facture.numero}.pdf`);
 
-      await fetch(`${BASE}/customer_invoices/${invoiceId}/appendices`, {
+      const attachment = await fetch(`${BASE}/customer_invoices/${invoiceId}/appendices`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: fdPdf,
       });
+      if (!attachment.ok) {
+        const err = await attachment.json().catch(() => ({}));
+        throw new Error(`PDF : HTTP ${attachment.status} — ${err.message || err.error || 'Pièce jointe refusée'}`);
+      }
+      facture.pennylane_pdf_attached = true;
+      if (idx !== -1) {
+        store.factures[idx].pennylane_pdf_attached = true;
+        await saveFactures();
+      }
     } catch (pdfErr) {
-      console.warn('[Pennylane] PDF non joint :', pdfErr);
+      data.nabhoo_warning = `Brouillon Pennylane ${invoiceId} conservé, mais pièce jointe non confirmée : ${pdfErr.message}`;
     }
-  }
-
-  // ── 3. Stocker l'ID dans la facture NABHOO ───────────────────────────────
-  const idx = store.factures.findIndex(f => f.id === facture.id);
-  if (idx !== -1) {
-    store.factures[idx].pennylane_id      = invoiceId || null;
-    store.factures[idx].pennylane_sent_at = new Date().toISOString();
-    await saveFactures();
   }
 
   return data;

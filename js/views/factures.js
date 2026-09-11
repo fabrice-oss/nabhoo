@@ -318,19 +318,14 @@ async function sendPennylane(id) {
   if (!mission) { toast('Mission introuvable', 'error'); return; }
 
   if (facture.pennylane_id) {
-    const ok = await confirm(`Déjà envoyée (ID : ${facture.pennylane_id}). Renvoyer quand même ?`);
+    const ok = await confirm(`Brouillon déjà créé (ID : ${facture.pennylane_id}). Reprendre la pièce jointe si nécessaire, sans créer de doublon ?`);
     if (!ok) return;
-    // Réinitialise l'ID pour permettre le renvoi
-    const idx = store.factures.findIndex(f => f.id === id);
-    delete store.factures[idx].pennylane_id;
-    delete store.factures[idx].pennylane_sent_at;
-    facture.pennylane_id = null;
   }
 
   toast('Envoi sur Pennylane en cours…');
   try {
     const data = await sendFactureToPennylane(facture, mission);
-    toast(`Facture envoyée sur Pennylane ✓ (ID : ${data.invoice?.id || data.id || '—'})`, 'success');
+    toast(data.nabhoo_warning || `Brouillon et PDF enregistrés dans Pennylane ✓ (ID : ${data.invoice?.id || data.id}) — non envoyé au client`, data.nabhoo_warning ? 'warning' : 'success');
     navigate('factures');
   } catch (e) {
     console.error('Pennylane envoi échoué :', e);
