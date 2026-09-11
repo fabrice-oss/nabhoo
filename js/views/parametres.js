@@ -154,7 +154,10 @@ export function init() {
       const result = await sendFactureToPennylane(test, mission);
       await saveSettings();
       const verified = await verifyPennylaneImport(result.id || test.pennylane_id);
-      output.textContent = `Test importé : facture ${test.pennylane_id}, PDF personnalisé conservé, Factur-X : ${verified.facturX ? 'présent' : 'conversion en cours'}, validation : ${verified.schematron}. Aucun envoi au client.`;
+      const sandboxHint = verified.schematron === 'invalid'
+        ? ' Dans le Sandbox Pennylane, le SIREN technique « sandbox-… » n’est pas un SIREN français valide : la validation Schematron reste donc invalide même lorsque le PDF, le XML Factur-X et les mentions obligatoires sont présents. Le contrôle final devra être refait dans le dossier Pennylane réel.'
+        : '';
+      output.textContent = `Test importé : facture ${test.pennylane_id}, PDF personnalisé conservé, Factur-X : ${verified.facturX ? 'présent' : 'conversion en cours'}, validation : ${verified.schematron}. Aucun envoi au client.${sandboxHint}`;
     } catch (error) {
       await saveSettings();
       output.textContent = `Test d'import non validé : ${error.message}`;

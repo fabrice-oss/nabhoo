@@ -9,7 +9,7 @@ const views = {
   factures:   () => import('./views/factures.js'),
   bpf:        () => import('./views/bpf.js'),
   urssaf:     () => import('./views/urssaf.js'),
-  parametres: () => import('./views/parametres.js?v=20260911-facturx2'),
+  parametres: () => import('./views/parametres.js?v=20260911-facturx3'),
 };
 
 const sectionTitles = {
