@@ -3,7 +3,8 @@ import { uuid, toast, escHtml, confirm, formatDate, formatCurrency, nextInvoiceN
 import { showModal, closeModal, navigate } from '../app.js';
 import { generateInvoicePDF } from '../pdf.js';
 import { uploadPDF } from '../api/drive.js';
-import { sendFactureToPennylane } from '../api/pennylane.js?v=20260911-1';
+import { sendFactureToPennylane, verifyPennylaneImport } from '../api/pennylane.js?v=20260911-2';
+import { invoiceCustomerOptions, resolveInvoiceCustomer, validateInvoice } from '../invoice-model.js';
 
 export function render(params = {}) {
   if (params.action === 'new' && params.missionId) {
@@ -49,12 +50,12 @@ function renderFacturesList(filter) {
       <div class="table-wrapper">
       <table class="data-table">
         <thead><tr>
-          <th>N° Facture</th><th>Date</th><th>Organisme</th><th>Mission</th><th>Montant HT</th><th>Échéance</th><th>Statut</th><th>Payée le</th><th>Actions</th>
+          <th>N° Facture</th><th>Date</th><th>Client facturé</th><th>Mission</th><th>Montant HT</th><th>Échéance</th><th>Statut</th><th>Payée le</th><th>Actions</th>
         </tr></thead>
         <tbody>
           ${sorted.map(f => {
             const m = getMission(f.mission_id);
-            const org = m ? getOrganisme(m.organisme_id) : null;
+            const org = m ? resolveInvoiceCustomer(f, m) : null;
             const retard = f.statut === 'en_attente' && f.date_echeance < isoToday();
             return `
               <tr class="${retard ? 'row-retard' : ''}">
@@ -128,6 +129,7 @@ function factureFormHTML(missionId = null) {
   const echeance = addDays(today, store.settings.facturation?.delai_paiement_jours || 45);
   const preselected = missionId ? store.missions.find(m => m.id === missionId) : null;
   const preTotal = preselected ? missionTotalHT(preselected) : 0;
+  const clientOptions = preselected ? invoiceCustomerOptions(preselected) : [];
 
   return `
     <form id="form-facture" class="form-grid">
@@ -149,6 +151,13 @@ function factureFormHTML(missionId = null) {
           }).join('')}
         </select>
       </div>
+      <div class="form-group" id="invoice-client-group">
+        <label>Client facturé *</label>
+        <select name="client_key" id="select-invoice-client" required>
+          ${renderClientOptions(clientOptions)}
+        </select>
+        <small>Choisissez l'entité juridiquement destinataire de la facture.</small>
+      </div>
       <div class="form-group form-group-half">
         <label>Montant HT (€) *</label>
         <input type="number" name="montant_ht" id="input-montant" value="${preTotal}" min="0" step="0.01" required>
@@ -161,6 +170,10 @@ function factureFormHTML(missionId = null) {
         <label>Référence formation / ID PIPE <span style="font-weight:400;color:var(--text-muted)">(optionnel — ex: PIPE-2026-042 ou REF-CSE-0312)</span></label>
         <input type="text" name="reference_formation" placeholder="Laisser vide si non applicable">
       </div>
+      <div class="form-group form-group-full">
+        <label>Numéro du bon de commande <span style="font-weight:400;color:var(--text-muted)">(obligatoire si le client en a émis un)</span></label>
+        <input type="text" name="numero_bon_commande" placeholder="Laisser vide si aucun bon de commande">
+      </div>
       <div class="form-actions">
         <button type="button" class="btn-secondary" id="btn-cancel">Annuler</button>
         <button type="submit" class="btn-primary">Créer la facture</button>
@@ -169,11 +182,17 @@ function factureFormHTML(missionId = null) {
 }
 
 function editFactureFormHTML(facture) {
+  const mission = getMission(facture.mission_id);
+  const selectedClient = facture.client_type && facture.client_id ? `${facture.client_type}:${facture.client_id}` : '';
   return `
     <form id="form-edit-facture" class="form-grid">
       <div class="form-group form-group-half">
         <label>Numéro *</label>
         <input type="text" name="numero" value="${escHtml(facture.numero)}" required>
+      </div>
+      <div class="form-group">
+        <label>Client facturé *</label>
+        <select name="client_key" required>${renderClientOptions(invoiceCustomerOptions(mission), selectedClient)}</select>
       </div>
       <div class="form-group form-group-half">
         <label>Date d'émission *</label>
@@ -202,11 +221,40 @@ function editFactureFormHTML(facture) {
         <label>Référence formation / ID PIPE <span style="font-weight:400;color:var(--text-muted)">(optionnel)</span></label>
         <input type="text" name="reference_formation" value="${escHtml(facture.reference_formation || '')}" placeholder="Ex: PIPE-2026-042 ou REF-CSE-0312">
       </div>
+      <div class="form-group form-group-full">
+        <label>Numéro du bon de commande <span style="font-weight:400;color:var(--text-muted)">(si établi par le client)</span></label>
+        <input type="text" name="numero_bon_commande" value="${escHtml(facture.numero_bon_commande || '')}">
+      </div>
       <div class="form-actions">
         <button type="button" class="btn-secondary" id="btn-cancel">Annuler</button>
         <button type="submit" class="btn-primary">Enregistrer les modifications</button>
       </div>
     </form>`;
+}
+
+function renderClientOptions(options, selected = '') {
+  if (!options.length) return '<option value="">Aucun client disponible pour cette mission</option>';
+  const effective = selected || (options.length === 1 ? options[0].key : '');
+  return `<option value="">— Choisir le client facturé —</option>${options.map(option =>
+    `<option value="${escHtml(option.key)}" ${option.key === effective ? 'selected' : ''}>${escHtml(option.label)}</option>`
+  ).join('')}`;
+}
+
+function splitClientKey(value) {
+  const [client_type, client_id] = String(value || '').split(':');
+  return { client_type, client_id };
+}
+
+function showComplianceErrors(errors) {
+  showModal('Informations obligatoires à compléter', `
+    <div class="compliance-alert" role="alert">
+      <p>La facture ne peut pas encore être générée ou transmise.</p>
+      <ul>${errors.map(error => `<li>${escHtml(error)}</li>`).join('')}</ul>
+      <p>Complétez la fiche du client et les Paramètres de facturation.</p>
+      <div class="form-actions"><button type="button" class="btn-primary" id="btn-close-compliance">J'ai compris</button></div>
+    </div>
+  `, 'modal-sm');
+  document.getElementById('btn-close-compliance')?.addEventListener('click', closeModal);
 }
 
 function openFactureForm(id = null, missionId = null) {
@@ -216,12 +264,16 @@ function openFactureForm(id = null, missionId = null) {
 
   document.getElementById('select-mission')?.addEventListener('change', e => {
     const m = getMission(e.target.value);
-    if (m) document.getElementById('input-montant').value = missionTotalHT(m);
+    if (m) {
+      document.getElementById('input-montant').value = missionTotalHT(m);
+      document.getElementById('select-invoice-client').innerHTML = renderClientOptions(invoiceCustomerOptions(m));
+    }
   });
 
   document.getElementById('form-facture')?.addEventListener('submit', async ev => {
     ev.preventDefault();
     const fd = new FormData(ev.target);
+    const client = splitClientKey(fd.get('client_key'));
     const facture = {
       id: uuid(),
       numero: fd.get('numero'),
@@ -232,9 +284,15 @@ function openFactureForm(id = null, missionId = null) {
       statut: 'en_attente',
       date_paiement: null,
       reference_formation: fd.get('reference_formation') || null,
+      numero_bon_commande: fd.get('numero_bon_commande') || null,
+      ...client,
       pdf_drive_id: null,
       created_at: new Date().toISOString(),
     };
+    const draftErrors = [];
+    if (!facture.client_id) draftErrors.push('Sélectionnez le client facturé.');
+    if (store.factures.some(item => item.numero === facture.numero)) draftErrors.push(`Le numéro ${facture.numero} est déjà utilisé.`);
+    if (draftErrors.length) { showComplianceErrors(draftErrors); return; }
     store.factures.push(facture);
     await saveFactures();
     toast('Facture créée ✓ — Utilisez le bouton 📄 pour générer le PDF');
@@ -246,6 +304,10 @@ function openFactureForm(id = null, missionId = null) {
 function openEditFactureForm(id) {
   const facture = store.factures.find(f => f.id === id);
   if (!facture) return;
+  if (facture.pennylane_imported) {
+    toast('Cette facture a été importée dans Pennylane. Créez un avoir pour la corriger.', 'warning');
+    return;
+  }
 
   showModal(`Modifier — ${facture.numero}`, editFactureFormHTML(facture));
 
@@ -261,7 +323,8 @@ function openEditFactureForm(id) {
     const fd = new FormData(ev.target);
     const idx = store.factures.findIndex(f => f.id === id);
     const newStatut = fd.get('statut');
-    store.factures[idx] = {
+    const client = splitClientKey(fd.get('client_key'));
+    const updated = {
       ...store.factures[idx],
       numero: fd.get('numero'),
       date_emission: fd.get('date_emission'),
@@ -270,7 +333,14 @@ function openEditFactureForm(id) {
       statut: newStatut,
       date_paiement: newStatut === 'payee' ? (fd.get('date_paiement') || isoToday()) : null,
       reference_formation: fd.get('reference_formation') || store.factures[idx].reference_formation || null,
+      numero_bon_commande: fd.get('numero_bon_commande') || null,
+      ...client,
     };
+    const draftErrors = [];
+    if (!updated.client_id) draftErrors.push('Sélectionnez le client facturé.');
+    if (store.factures.some(item => item.id !== updated.id && item.numero === updated.numero)) draftErrors.push(`Le numéro ${updated.numero} est déjà utilisé.`);
+    if (draftErrors.length) { showComplianceErrors(draftErrors); return; }
+    store.factures[idx] = updated;
     await saveFactures();
     toast('Facture modifiée ✓');
     closeModal();
@@ -284,6 +354,8 @@ async function downloadPDF(id) {
   const mission = getMission(facture.mission_id);
   if (!mission) { toast('Mission introuvable', 'error'); return; }
 
+  const validation = validateInvoice(facture, mission);
+  if (!validation.valid) { showComplianceErrors(validation.errors); return; }
   toast('Génération du PDF en cours…');
   try {
     const blob = await generateInvoicePDF(facture, mission);
@@ -317,15 +389,26 @@ async function sendPennylane(id) {
   const mission = getMission(facture.mission_id);
   if (!mission) { toast('Mission introuvable', 'error'); return; }
 
+  const validation = validateInvoice(facture, mission);
+  if (!validation.valid) { showComplianceErrors(validation.errors); return; }
+
   if (facture.pennylane_id) {
-    const ok = await confirm(`Brouillon déjà créé (ID : ${facture.pennylane_id}). Reprendre la pièce jointe si nécessaire, sans créer de doublon ?`);
-    if (!ok) return;
+    if (facture.pennylane_imported) {
+      const status = await verifyPennylaneImport(facture.pennylane_id).catch(() => null);
+      toast(status
+        ? `Facture déjà importée - validation Factur-X : ${status.schematron}`
+        : `Facture déjà importée dans Pennylane (ID : ${facture.pennylane_id})`, 'warning');
+      return;
+    }
   }
+
+  const proceed = await confirm('Importer le PDF personnalisé dans Pennylane et demander sa conversion en facture électronique Factur-X ? La facture ne sera pas envoyée au client à cette étape.');
+  if (!proceed) return;
 
   toast('Envoi sur Pennylane en cours…');
   try {
     const data = await sendFactureToPennylane(facture, mission);
-    toast(data.nabhoo_warning || `Brouillon et PDF enregistrés dans Pennylane ✓ (ID : ${data.invoice?.id || data.id}) — non envoyé au client`, data.nabhoo_warning ? 'warning' : 'success');
+    toast(`PDF personnalisé importé dans Pennylane ✓ (ID : ${data.invoice?.id || data.id}) - conversion Factur-X en cours, non envoyé au client`, 'success');
     navigate('factures');
   } catch (e) {
     console.error('Pennylane envoi échoué :', e);
@@ -363,6 +446,11 @@ function markPaid(id) {
 }
 
 async function deleteFacture(id) {
+  const facture = store.factures.find(f => f.id === id);
+  if (facture?.pennylane_imported) {
+    toast('Une facture importée dans Pennylane ne peut pas être supprimée. Créez un avoir.', 'warning');
+    return;
+  }
   const ok = await confirm('Supprimer cette facture définitivement ?');
   if (!ok) return;
   store.factures = store.factures.filter(f => f.id !== id);

@@ -1,350 +1,246 @@
 import { store } from './data.js';
 import { formatDate, formatCurrency } from './utils.js';
+import { resolveInvoiceCustomer, invoiceTotals, sirenFrom, validateInvoice, complianceMessage } from './invoice-model.js';
 
-// ── Correctif caractères : Intl 'fr-FR' insère U+202F / U+00A0 comme
-// séparateur de milliers. La police Roboto embarquée dans pdfmake ne contient
-// pas ces glyphes → rendu \x00 dans le PDF. On les remplace par une espace.
-function pdfCurrency(n) {
-  return formatCurrency(n)
-    .replace(/ /g, ' ')
-    .replace(/ /g, ' ');
+const NAVY = '#172554';
+const BLUE = '#3659D9';
+const CYAN = '#39C6E8';
+const INK = '#172033';
+const BODY = '#445066';
+const MUTED = '#68758B';
+const LINE = '#DCE3EE';
+const MIST = '#F5F7FB';
+const WHITE = '#FFFFFF';
+const MARGIN = 38;
+const NO_BORDERS = {
+  hLineWidth: () => 0, vLineWidth: () => 0,
+  paddingLeft: () => 0, paddingRight: () => 0,
+  paddingTop: () => 0, paddingBottom: () => 0,
+};
+
+function pdfCurrency(value) {
+  return formatCurrency(value).replace(/[\u202f\u00a0]/g, ' ');
 }
 
-// Le logo posé sur le bandeau bleu nuit est celui de l'ORGANISME émetteur,
-// pas celui de NABHOO : on ne lit que store.settings.logo_base64. Pas de
-// repli sur assets/logo.png — c'est le logo NABHOO, noir, illisible sur navy.
-// Sans logo réglé, le bandeau n'affiche que le nom commercial en blanc.
-async function getLogoDataUrl() {
-  return store.settings.logo_base64 || null;
-}
+function clean(value) { return String(value || '').trim(); }
+function compact(values) { return values.filter(Boolean); }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// PALETTE — reprise du logo AVRILA (bleu nuit, bleu roi, cyan, orange)
-// ══════════════════════════════════════════════════════════════════════════════
-const NAVY       = '#0B2A5B'; // bandeau, pied de page, ligne net à payer
-const NAVY_MID   = '#123C7E'; // en-tête du tableau des prestations
-const BLUE       = '#1A63D8'; // libellés de section, totaux de ligne
-const CYAN       = '#35D3EF'; // accent : mot FACTURE, montant à payer
-const ORANGE     = '#FF9D4D'; // échéance sur fond bleu nuit
-const MIST       = '#EEF3F9'; // aplat clair : bloc client, objet, totaux
-const TILE       = '#F7FAFD'; // aplat très clair : lignes, bloc règlement
-const INK        = '#0B2A5B'; // titres
-const BODY       = '#3E5578'; // texte courant
-const MUTED      = '#5A6B85'; // libellés secondaires (contraste 4.5:1)
-const FAINT      = '#5E7290'; // identifiants légaux en petit corps
-const ON_NAVY    = '#FFFFFF';
-const ON_NAVY_2  = '#8FB4E8';
-
-const PAGE_W  = 595.28;       // A4 en points
-const MARGIN  = 42;           // marge latérale
-const MARGIN_T = 34;          // marge haute (le bandeau la déborde)
-const NO_BORDERS = { hLineWidth: () => 0, vLineWidth: () => 0, paddingLeft: () => 0, paddingRight: () => 0, paddingTop: () => 0, paddingBottom: () => 0 };
-
-// Un aplat de couleur pleine largeur intérieure, sans filet
-function block(stack, fill, pad) {
+function row(text, options = {}) {
   return {
-    table: { widths: ['*'], body: [[{ stack, fillColor: fill, border: [false, false, false, false], margin: pad }]] },
+    text, fontSize: options.size || 8, color: options.color || BODY,
+    bold: Boolean(options.bold), margin: [0, options.top || 1.5, 0, 0],
+  };
+}
+
+function sectionLabel(text) {
+  return { text, fontSize: 6.8, bold: true, characterSpacing: 1.25, color: BLUE };
+}
+
+function card(stack, fill = MIST, padding = [13, 11, 13, 11]) {
+  return {
+    table: { widths: ['*'], body: [[{ stack, fillColor: fill, border: [false, false, false, false], margin: padding }]] },
     layout: NO_BORDERS,
   };
 }
 
-function label(text, color) {
-  return { text, fontSize: 6.75, bold: true, characterSpacing: 1.65, color };
+function legalSellerName(settings) {
+  const status = clean(settings.forme_juridique);
+  const ei = /entrepreneur individuel|\bei\b/i.test(status) ? status : 'Entrepreneur individuel';
+  return `${clean(settings.dirigeant)} - ${ei}`;
 }
 
-export async function generateInvoicePDF(facture, mission) {
-  const s    = store.settings;
-  const org  = store.organismes.find(o => o.id === mission.organisme_id) || {};
-  const logo = await getLogoDataUrl();
+function clientAddress(customer) {
+  return clean(customer.adresse_facturation) || clean(customer.adresse);
+}
 
-  const lignes  = buildLignes(facture, mission);
-  const totalHT = lignes.reduce((sum, l) => sum + l.total, 0);
-  const isPaid  = facture.statut === 'payee';
+export async function buildInvoiceDefinition(facture, mission, { validate = true } = {}) {
+  const validation = validateInvoice(facture, mission);
+  if (validate && !validation.valid) throw new Error(complianceMessage(validation.errors));
 
-  // TVA : 0 ou absent → franchise art. 293 B. Sinon on calcule.
-  const tauxTVA   = Number(facture.tva_taux ?? s.facturation?.tva_taux ?? 0);
-  const tvaDue    = tauxTVA > 0;
-  const montantTVA = tvaDue ? totalHT * tauxTVA / 100 : 0;
-  const netAPayer = totalHT + montantTVA;
+  const settings = store.settings;
+  const customer = validation.customer || resolveInvoiceCustomer(facture, mission) || {};
+  const logo = settings.logo_base64 || null;
+  const { lines, totalHT, vatRate, vatAmount, totalTTC } = invoiceTotals(facture, mission);
+  const vatDue = vatRate > 0;
+  const sellerSiren = sirenFrom(settings.siret);
+  const buyerSiren = sirenFrom(customer.siret || customer.siren);
+  const legal = settings.facturation || {};
+  const isPaid = facture.statut === 'payee';
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // 1. BANDEAU BLEU NUIT — déborde les marges pour toucher les bords de page
-  // ════════════════════════════════════════════════════════════════════════════
-  const identite = {
+  const header = {
     columns: [
-      logo
-        ? { image: logo, fit: [40.5, 40.5], width: 46 }
-        : { text: '', width: 0 },   // sans logo : le nom commercial porte l'identité
       {
-        stack: [
-          { text: (s.nom_commercial || 'AVRILA FORMATION').toUpperCase(), fontSize: 12, bold: true, characterSpacing: 1.8, color: ON_NAVY },
-          { text: `ORGANISME DE FORMATION${s.nda ? '  ·  NDA ' + s.nda : ''}`, fontSize: 7.5, characterSpacing: 0.85, color: ON_NAVY_2, margin: [0, 4, 0, 0] },
-        ],
         width: '*',
-        margin: [6, 5, 0, 0],
+        columns: compact([
+          logo ? { image: logo, fit: [108, 54], width: 116, margin: [0, 0, 12, 0] } : null,
+          {
+            stack: [
+              { text: clean(settings.nom_commercial), fontSize: 13, bold: true, color: NAVY },
+              { text: legalSellerName(settings), fontSize: 7.7, color: MUTED, margin: [0, 4, 0, 0] },
+            ],
+            width: '*', margin: [0, 7, 0, 0],
+          },
+        ]),
+      },
+      {
+        width: 190, alignment: 'right',
+        stack: [
+          { text: 'FACTURE', fontSize: 23, bold: true, characterSpacing: 2.4, color: NAVY },
+          { text: facture.numero, fontSize: 11, bold: true, color: BLUE, margin: [0, 5, 0, 0] },
+          { text: `Emise le ${formatDate(facture.date_emission)}`, fontSize: 7.8, color: BODY, margin: [0, 5, 0, 0] },
+          { text: `Echeance le ${formatDate(facture.date_echeance)}`, fontSize: 7.8, bold: true, color: NAVY, margin: [0, 2, 0, 0] },
+        ],
       },
     ],
-    columnGap: 0,
-    width: '*',
+    columnGap: 22,
+    margin: [0, 0, 0, 10],
   };
 
-  const numeroBloc = {
-    stack: [
-      { text: 'FACTURE', fontSize: 8.25, bold: true, characterSpacing: 3.4, color: CYAN, alignment: 'right' },
-      { text: facture.numero || '', fontSize: 21.75, bold: true, characterSpacing: 0.4, color: ON_NAVY, alignment: 'right', margin: [0, 5, 0, 0] },
+  const accent = {
+    canvas: [
+      { type: 'rect', x: 0, y: 0, w: 442, h: 2.2, color: BLUE },
+      { type: 'rect', x: 442, y: 0, w: 77, h: 2.2, color: CYAN },
     ],
-    width: 'auto',
+    margin: [0, 0, 0, 15],
   };
 
-  const dateCell = (lbl, value, color) => ({
-    stack: [
-      { text: lbl, fontSize: 6.75, bold: true, characterSpacing: 1.5, color: ON_NAVY_2 },
-      { text: value, fontSize: 9.75, bold: true, color, margin: [0, 5, 0, 0] },
+  const sellerLines = compact([
+    row(legalSellerName(settings), { bold: true, color: INK, top: 6 }),
+    row(clean(settings.nom_commercial)),
+    row(clean(settings.adresse)),
+    row(`${clean(settings.cp)} ${clean(settings.ville)}`.trim()),
+    row(clean(settings.email), { color: BLUE, top: 3 }),
+    row(clean(settings.tel)),
+    row(`SIREN ${sellerSiren} - SIRET ${clean(settings.siret)}`, { size: 7.1, color: MUTED, top: 4 }),
+    settings.tva_intracom ? row(`TVA intracommunautaire ${clean(settings.tva_intracom)}`, { size: 7.1, color: MUTED }) : null,
+    settings.naf ? row(`Code NAF ${clean(settings.naf)}`, { size: 7.1, color: MUTED }) : null,
+  ]);
+
+  const buyerLines = compact([
+    row(clean(customer.nom), { bold: true, color: INK, top: 6 }),
+    row(clientAddress(customer)),
+    row(`${clean(customer.cp_facturation || customer.cp)} ${clean(customer.ville_facturation || customer.ville)}`.trim()),
+    customer.correspondant ? row(`A l'attention de ${clean(customer.correspondant)}`, { top: 4 }) : null,
+    customer.email ? row(clean(customer.email), { color: BLUE }) : null,
+    row(`SIREN ${buyerSiren} - SIRET ${clean(customer.siret)}`, { size: 7.1, color: MUTED, top: 4 }),
+    customer.tva_intracom ? row(`TVA intracommunautaire ${clean(customer.tva_intracom)}`, { size: 7.1, color: MUTED }) : null,
+  ]);
+
+  const parties = {
+    columns: [
+      { ...card([sectionLabel('EMETTEUR'), ...sellerLines], WHITE, [0, 0, 12, 0]), width: '49%' },
+      { ...card([sectionLabel('CLIENT FACTURE'), ...buyerLines], MIST), width: '49%' },
     ],
-    width: 'auto',
+    columnGap: 14,
+    margin: [0, 0, 0, 13],
+  };
+
+  const refs = compact([
+    facture.reference_formation ? `Reference formation / ID PIPE : ${facture.reference_formation}` : null,
+    facture.numero_bon_commande ? `Bon de commande : ${facture.numero_bon_commande}` : null,
+  ]).join('   |   ');
+  const subject = card(compact([
+    {
+      columns: [
+        { ...sectionLabel('OBJET'), width: 42, margin: [0, 1, 0, 0] },
+        { text: clean(mission.intitule) || 'Prestation de services', fontSize: 9.3, bold: true, color: INK, width: '*' },
+        { text: 'PRESTATION DE SERVICES', fontSize: 6.5, bold: true, color: BLUE, alignment: 'right', width: 120 },
+      ], columnGap: 8,
+    },
+    refs ? { text: refs, fontSize: 7.2, color: MUTED, margin: [50, 4, 0, 0] } : null,
+  ]), MIST, [13, 10, 13, 10]);
+  subject.margin = [0, 0, 0, 12];
+
+  const th = (text, align = 'left') => ({
+    text, fontSize: 6.6, bold: true, color: WHITE, alignment: align,
+    fillColor: NAVY, margin: [8, 7, 8, 7],
   });
-
-  const bandeau = block([
-    { columns: [identite, numeroBloc], columnGap: 24 },
-    {
-      columns: [
-        {
-          columns: [
-            dateCell('ÉMISE LE', formatDate(facture.date_emission), ON_NAVY),
-            dateCell('ÉCHÉANCE', formatDate(facture.date_echeance), ORANGE),
-            { text: '', width: '*' },
-          ],
-          columnGap: 26,
-          width: '*',
-        },
-        {
-          stack: [
-            { text: 'NET À PAYER', fontSize: 6.75, bold: true, characterSpacing: 1.8, color: ON_NAVY_2, alignment: 'right' },
-            { text: pdfCurrency(netAPayer), fontSize: 28.5, bold: true, color: CYAN, alignment: 'right', margin: [0, 4, 0, 0] },
-          ],
-          width: 'auto',
-        },
-      ],
-      columnGap: 24,
-      margin: [0, 22, 0, 0],
-    },
-  ], NAVY, [MARGIN, 34.5, MARGIN, 24]);
-  bandeau.margin = [-MARGIN, -MARGIN_T, -MARGIN, 28];
-
-  // ════════════════════════════════════════════════════════════════════════════
-  // 2. ÉMETTEUR (à plat) / FACTURÉ À (aplat clair)
-  // ════════════════════════════════════════════════════════════════════════════
-  const line = (text, opts = {}) => ({ text, fontSize: opts.size || 8.25, color: opts.color || BODY, bold: !!opts.bold, margin: [0, opts.top || 1.5, 0, 0] });
-
-  const emetteur = {
-    stack: [
-      label('ÉMETTEUR', BLUE),
-      { text: s.nom_commercial || 'AVRILA FORMATION', fontSize: 10.5, bold: true, color: INK, margin: [0, 7, 0, 4] },
-      ...[
-        s.dirigeant       ? line(s.dirigeant) : null,
-        s.adresse         ? line(s.adresse) : null,
-        (s.cp || s.ville) ? line(`${s.cp || ''} ${s.ville || ''}`.trim()) : null,
-        s.email           ? line(s.email, { color: BLUE, top: 4 }) : null,
-        s.tel             ? line(s.tel) : null,
-        s.siret           ? line(`SIRET ${s.siret}`, { size: 7.1, color: FAINT, top: 7 }) : null,
-        s.naf             ? line(`Code NAF ${s.naf}`, { size: 7.1, color: FAINT }) : null,
-      ].filter(Boolean),
-    ],
-    width: '48%',
-  };
-
-  const client = {
-    ...block([
-      label('FACTURÉ À', BLUE),
-      { text: org.nom || '', fontSize: 10.5, bold: true, color: INK, margin: [0, 7, 0, 4] },
-      ...[
-        org.adresse           ? line(org.adresse) : null,
-        (org.cp || org.ville) ? line(`${org.cp || ''} ${org.ville || ''}`.trim()) : null,
-        org.correspondant     ? line(`À l'att. de ${org.correspondant}`, { top: 6 }) : null,
-        org.email             ? line(org.email, { color: BLUE }) : null,
-        org.siret             ? line(`SIRET ${org.siret}`, { size: 7.1, color: FAINT, top: 7 }) : null,
-      ].filter(Boolean),
-    ], MIST, [16, 15, 16, 16]),
-    width: '48%',
-  };
-
-  const adresses = { columns: [emetteur, { text: '', width: '4%' }, client], columnGap: 0, margin: [0, 0, 0, 20] };
-
-  // ════════════════════════════════════════════════════════════════════════════
-  // 3. OBJET
-  // ════════════════════════════════════════════════════════════════════════════
-  const objetTexte = `${mission.intitule || 'Formation'}${org.nom ? ' — ' + org.nom : ''}`;
-  const objet = block([
-    {
-      columns: [
-        { ...label('OBJET', BLUE), width: 36, margin: [0, 2, 0, 0] },
-        { text: objetTexte, fontSize: 9.75, bold: true, color: INK, width: '*' },
-      ],
-      columnGap: 12,
-    },
-    ...(facture.reference_formation ? [{
-      columns: [
-        { text: '', width: 36 },
-        { text: `Réf. ${facture.reference_formation}`, fontSize: 7.5, color: MUTED, width: '*' },
-      ],
-      columnGap: 12,
-      margin: [0, 4, 0, 0],
-    }] : []),
-  ], MIST, [16, 12, 16, 12]);
-  objet.margin = [0, 0, 0, 20];
-
-  // ════════════════════════════════════════════════════════════════════════════
-  // 4. TABLEAU DES PRESTATIONS
-  // ════════════════════════════════════════════════════════════════════════════
-  const th = (text, align, pad) => ({ text, fontSize: 6.75, bold: true, characterSpacing: 1.05, color: ON_NAVY, alignment: align, fillColor: NAVY_MID, margin: pad });
-
-  const prestations = {
+  const services = {
     table: {
-      headerRows: 1,
-      dontBreakRows: true,
-      widths: ['*', 84, 69, 84],
+      headerRows: 1, dontBreakRows: true, widths: ['*', 64, 84, 82],
       body: [
-        [
-          th('DESCRIPTION', 'left', [12, 9, 12, 9]),
-          th('PRIX UNITAIRE', 'right', [6, 9, 6, 9]),
-          th('QUANTITÉ', 'center', [6, 9, 6, 9]),
-          th('TOTAL', 'right', [6, 9, 12, 9]),
-        ],
-        ...lignes.map((l, i) => {
-          const bg = i % 2 === 0 ? TILE : '#FFFFFF';
+        [th('DESCRIPTION'), th('QUANTITE', 'center'), th('PRIX UNITAIRE HT', 'right'), th('TOTAL HT', 'right')],
+        ...lines.map((line, index) => {
+          const fill = index % 2 ? WHITE : MIST;
           return [
             {
-              stack: [
-                { text: l.description, fontSize: 9, bold: true, color: INK },
-                l.subtitle ? { text: l.subtitle, fontSize: 7.5, color: MUTED, margin: [0, 4, 0, 0], lineHeight: 1.3 } : null,
-              ].filter(Boolean),
-              fillColor: bg, margin: [12, 12, 12, 12],
+              stack: compact([
+                { text: line.description, fontSize: 8.3, bold: true, color: INK },
+                line.subtitle ? { text: line.subtitle, fontSize: 7, color: MUTED, margin: [0, 3, 0, 0] } : null,
+              ]), fillColor: fill, margin: [8, 8, 8, 8],
             },
-            { text: pdfCurrency(l.prix_unitaire), fontSize: 8.6, color: '#26364F', alignment: 'right', fillColor: bg, margin: [6, 12, 6, 12] },
-            { text: `${l.quantite} ${l.unite}`,   fontSize: 8.6, color: '#26364F', alignment: 'center', fillColor: bg, margin: [6, 12, 6, 12] },
-            { text: pdfCurrency(l.total), fontSize: 9.4, bold: true, color: BLUE, alignment: 'right', fillColor: bg, margin: [6, 12, 12, 12] },
+            { text: `${line.quantity} ${line.unit}`, fontSize: 7.8, color: BODY, alignment: 'center', fillColor: fill, margin: [4, 8, 4, 8] },
+            { text: pdfCurrency(line.unitPrice), fontSize: 7.8, color: BODY, alignment: 'right', fillColor: fill, margin: [4, 8, 4, 8] },
+            { text: pdfCurrency(line.total), fontSize: 8.2, bold: true, color: BLUE, alignment: 'right', fillColor: fill, margin: [4, 8, 8, 8] },
           ];
         }),
       ],
     },
-    layout: NO_BORDERS,
-    margin: [0, 0, 0, 24],
+    layout: { hLineColor: () => LINE, vLineWidth: () => 0, hLineWidth: i => i > 1 ? 0.5 : 0 },
+    margin: [0, 0, 0, 13],
   };
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // 5. RÈGLEMENT + TOTAUX
-  // ════════════════════════════════════════════════════════════════════════════
-  const reglementLines = [
-    label('RÈGLEMENT', BLUE),
-    { text: s.mode_paiement || 'Par virement bancaire', fontSize: 9, bold: true, color: INK, margin: [0, 7, 0, 5] },
-  ];
-  if (s.banque) reglementLines.push({ text: s.banque, fontSize: 7.5, color: BODY, margin: [0, 1.5, 0, 0], lineHeight: 1.35 });
-  if (s.iban)   reglementLines.push({ text: `IBAN ${s.iban}`, fontSize: 7.5, color: BODY, margin: [0, 1.5, 0, 0] });
-  if (s.bic)    reglementLines.push({ text: `BIC ${s.bic}`, fontSize: 7.5, color: BODY, margin: [0, 1.5, 0, 0] });
+  const paymentStack = compact([
+    sectionLabel('REGLEMENT'),
+    row(clean(settings.mode_paiement) || 'Virement bancaire', { bold: true, color: INK, top: 6 }),
+    settings.banque ? row(clean(settings.banque)) : null,
+    settings.iban ? row(`IBAN ${clean(settings.iban)}`, { size: 7.4 }) : null,
+    settings.bic ? row(`BIC ${clean(settings.bic)}`, { size: 7.4 }) : null,
+    row(`Date limite de paiement : ${formatDate(facture.date_echeance)}`, { bold: true, color: INK, top: 5 }),
+  ]);
 
-  const reglement = { ...block(reglementLines, TILE, [16, 15, 16, 16]), width: '*' };
-
-  const totalRow = (lbl, value, opts = {}) => ({
+  const totalRow = (label, value, strong = false) => ({
     table: {
       widths: ['*', 'auto'],
       body: [[
-        { text: lbl, fontSize: opts.big ? 7.5 : 7.9, bold: !!opts.big, characterSpacing: opts.big ? 1.35 : 0.3, color: opts.labelColor, fillColor: opts.fill, border: [false, false, false, false], margin: [12, opts.big ? 12 : 9, 8, opts.big ? 12 : 9] },
-        { text: value, fontSize: opts.valueSize || 9, bold: true, color: opts.valueColor, fillColor: opts.fill, alignment: 'right', border: [false, false, false, false], margin: [8, opts.big ? 11 : 9, 12, opts.big ? 11 : 9] },
+        { text: label, fontSize: strong ? 7.4 : 7.7, bold: strong, color: strong ? WHITE : MUTED, fillColor: strong ? NAVY : MIST, margin: [11, strong ? 10 : 7, 8, strong ? 10 : 7], border: [false, false, false, false] },
+        { text: value, fontSize: strong ? 13 : 8.6, bold: true, color: strong ? WHITE : INK, alignment: 'right', fillColor: strong ? NAVY : MIST, margin: [8, strong ? 8 : 7, 11, strong ? 8 : 7], border: [false, false, false, false] },
       ]],
     },
     layout: NO_BORDERS,
-    margin: [0, 0, 0, 6],
+    margin: [0, 0, 0, 4],
   });
+  const totalsStack = [
+    totalRow('TOTAL HT', pdfCurrency(totalHT)),
+    totalRow(vatDue ? `TVA ${vatRate} %` : 'TVA', vatDue ? pdfCurrency(vatAmount) : 'Non applicable'),
+    totalRow('NET A PAYER', pdfCurrency(totalTTC), true),
+    !vatDue ? { text: legal.mention_tva || 'TVA non applicable, art. 293 B du CGI', fontSize: 6.7, color: MUTED, alignment: 'right', margin: [0, 4, 0, 0] } : null,
+    vatDue && legal.tva_sur_debits ? { text: "Option pour le paiement de la taxe d'après les débits", fontSize: 6.7, color: MUTED, alignment: 'right', margin: [0, 4, 0, 0] } : null,
+  ].filter(Boolean);
 
-  const totauxStack = [
-    totalRow('TOTAL HT', pdfCurrency(totalHT), { fill: MIST, labelColor: MUTED, valueColor: INK }),
-    tvaDue
-      ? totalRow(`TVA ${tauxTVA} %`, pdfCurrency(montantTVA), { fill: MIST, labelColor: MUTED, valueColor: INK })
-      : totalRow('TVA', 'Non applicable', { fill: MIST, labelColor: MUTED, valueColor: MUTED, valueSize: 8.25 }),
-    totalRow('NET À PAYER', pdfCurrency(netAPayer), { fill: NAVY, labelColor: ON_NAVY_2, valueColor: CYAN, valueSize: 14.25, big: true }),
-  ];
-  if (!tvaDue) {
-    totauxStack.push({
-      text: s.facturation?.mention_tva || 'TVA non applicable, art. 293 B du CGI',
-      fontSize: 6.75, color: FAINT, alignment: 'right', margin: [0, 2, 0, 0],
-    });
-  }
-
-  const bas = { columns: [reglement, { text: '', width: 18 }, { stack: totauxStack, width: 225 }], columnGap: 0 };
-
-  // ════════════════════════════════════════════════════════════════════════════
-  // 6. DOCUMENT
-  // ════════════════════════════════════════════════════════════════════════════
-  const piedTexte = [
-    "Facture générée par l'application NABHOO créé par AVRILA STUDIO",
-    'Conditions générales de vente disponibles sur le site de l\'organisme',
-  ].join('  ·  ');
-
-  const docDefinition = {
-    pageSize: 'A4',
-    pageMargins: [MARGIN, MARGIN_T, MARGIN, 46],
-    defaultStyle: { font: 'Roboto', fontSize: 8.25, color: BODY, lineHeight: 1.22 },
-
-    ...(isPaid ? { watermark: { text: 'PAYÉE', color: BLUE, opacity: 0.09, bold: true, fontSize: 78, angle: -32 } } : {}),
-
-    // Pied de page : bandeau bleu nuit pleine largeur, sans filet
-    footer: () => ({
-      table: {
-        widths: [PAGE_W],
-        body: [[{
-          text: piedTexte,
-          fontSize: 6.75, color: ON_NAVY_2, alignment: 'center', characterSpacing: 0.4,
-          fillColor: NAVY, border: [false, false, false, false], margin: [MARGIN, 10, MARGIN, 10],
-        }]],
-      },
-      layout: NO_BORDERS,
-      margin: [0, 6, 0, 0],
-    }),
-
-    content: [bandeau, adresses, objet, prestations, bas],
+  const payment = {
+    columns: [
+      { ...card(paymentStack, MIST), width: '*' },
+      { text: '', width: 14 },
+      { stack: totalsStack, width: 222 },
+    ],
+    columnGap: 0,
+    margin: [0, 0, 0, 12],
   };
 
-  return new Promise((resolve) => {
-    pdfMake.createPdf(docDefinition).getBlob(resolve);
-  });
+  const terms = card([
+    sectionLabel('CONDITIONS DE REGLEMENT'),
+    { text: `Escompte : ${legal.escompte}. Penalites de retard : ${legal.penalites_taux}. Indemnite forfaitaire pour frais de recouvrement en cas de retard de paiement : ${Number(legal.indemnite_recouvrement || 40)} EUR.`, fontSize: 6.9, color: BODY, lineHeight: 1.25, margin: [0, 5, 0, 0] },
+    settings.nda ? { text: `Declaration d'activite enregistree sous le numero ${clean(settings.nda)}. Cet enregistrement ne vaut pas agrement de l'Etat.`, fontSize: 6.8, color: MUTED, margin: [0, 4, 0, 0] } : null,
+  ].filter(Boolean), WHITE, [0, 0, 0, 0]);
+
+  return {
+    pageSize: 'A4',
+    pageMargins: [MARGIN, 30, MARGIN, 34],
+    defaultStyle: { font: 'Roboto', fontSize: 8, color: BODY, lineHeight: 1.18 },
+    ...(isPaid ? { watermark: { text: 'PAYEE', color: BLUE, opacity: 0.075, bold: true, fontSize: 76, angle: -30 } } : {}),
+    footer: currentPage => ({
+      columns: [
+        { text: `Facture ${facture.numero} - ${clean(settings.nom_commercial)}`, fontSize: 6.4, color: MUTED },
+        { text: `Page ${currentPage}`, fontSize: 6.4, color: MUTED, alignment: 'right' },
+      ],
+      margin: [MARGIN, 8, MARGIN, 0],
+    }),
+    content: [header, accent, parties, subject, services, payment, terms],
+  };
 }
 
-// ── Construction des lignes de facturation ───────────────────────────────────
-function buildLignes(facture, mission) {
-  const lignes   = [];
-  const sessions = mission.sessions || [];
-  const nb       = sessions.length;
-  const tarif    = mission.tarif_journalier || 0;
-
-  const dates = sessions.map(s =>
-    new Date(s.date + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
-  );
-  // « 3, 4, 7, 8 et 9 septembre 2026 » plutôt qu'une énumération répétitive
-  const sessionDates = dates.length > 1
-    ? dates.slice(0, -1).join(', ') + ' et ' + dates[dates.length - 1]
-    : dates[0] || '';
-
-  if (nb > 0 && tarif > 0) {
-    lignes.push({
-      description:   `Animation de formation : ${mission.intitule || 'Formation'}`,
-      subtitle:      sessionDates ? `Sessions : ${sessionDates}` : '',
-      quantite:      nb,
-      unite:         nb > 1 ? 'jours' : 'jour',
-      prix_unitaire: tarif,
-      total:         nb * tarif,
-    });
-  }
-
-  if (mission.frais_deplacement > 0) {
-    lignes.push({
-      description:   'Frais de déplacement',
-      subtitle:      'Remboursement forfaitaire',
-      quantite:      1,
-      unite:         'forfait',
-      prix_unitaire: mission.frais_deplacement,
-      total:         mission.frais_deplacement,
-    });
-  }
-
-  return lignes;
+export async function generateInvoicePDF(facture, mission, options = {}) {
+  const definition = await buildInvoiceDefinition(facture, mission, options);
+  return new Promise(resolve => pdfMake.createPdf(definition).getBlob(resolve));
 }

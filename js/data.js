@@ -34,7 +34,13 @@ export async function initData() {
     loadJSON('declarations_urssaf'),
   ]);
 
-  if (settings) store.settings = { ...store.settings, ...settings };
+  if (settings) {
+    store.settings = {
+      ...store.settings,
+      ...settings,
+      facturation: { ...store.settings.facturation, ...(settings.facturation || {}) },
+    };
+  }
   if (organismes) store.organismes = organismes;
   if (entreprises) store.entreprises = entreprises;
   if (missions) store.missions = missions;

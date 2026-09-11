@@ -117,6 +117,22 @@ function organisme_form(o = {}) {
         <input type="text" name="siret" value="${escHtml(o.siret || '')}">
       </div>
       <div class="form-group">
+        <label>N° TVA intracommunautaire <span style="font-weight:400;color:var(--text-muted)">(si attribué)</span></label>
+        <input type="text" name="tva_intracom" value="${escHtml(o.tva_intracom || '')}" placeholder="FRXX123456789">
+      </div>
+      <div class="form-group">
+        <label>Adresse de facturation <span style="font-weight:400;color:var(--text-muted)">(si différente)</span></label>
+        <input type="text" name="adresse_facturation" value="${escHtml(o.adresse_facturation || '')}">
+      </div>
+      <div class="form-group form-group-half">
+        <label>CP de facturation</label>
+        <input type="text" name="cp_facturation" value="${escHtml(o.cp_facturation || '')}">
+      </div>
+      <div class="form-group form-group-half">
+        <label>Ville de facturation</label>
+        <input type="text" name="ville_facturation" value="${escHtml(o.ville_facturation || '')}">
+      </div>
+      <div class="form-group">
         <label>ID client Pennylane <span style="font-weight:400;color:var(--text-muted)">(facultatif — liaison facturation électronique)</span></label>
         <input type="number" name="pennylane_customer_id" value="${escHtml(o.pennylane_customer_id || '')}" placeholder="Ex : 29359435 (nombre entier)">
       </div>

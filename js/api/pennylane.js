@@ -1,5 +1,6 @@
 import { store, saveFactures } from '../data.js';
 import { generateInvoicePDF } from '../pdf.js';
+import { invoiceTotals, resolveInvoiceCustomer } from '../invoice-model.js';
 
 const PROXY = 'https://nabhoo-pennylane.fabriceavrila.workers.dev';
 const BASE  = `${PROXY}/api/external/v2`;
@@ -29,9 +30,9 @@ function vatCode(taux) {
   if (t === 0) return 'exempt';
   if (t === 20)  return 'FR_200';
   if (t === 10)  return 'FR_100';
-  if (t === 8.5) return 'FR_85';
-  if (t === 5.5) return 'FR_55';
-  if (t === 2.1) return 'FR_21';
+  if (t === 8.5) return 'FR_085';
+  if (t === 5.5) return 'FR_055';
+  if (t === 2.1) return 'FR_021';
   throw new Error(`Taux de TVA non pris en charge par l’intégration Pennylane : ${taux}. Vérifiez la facture.`);
 }
 
@@ -39,13 +40,131 @@ export async function sendFactureToPennylane(facture, mission) {
   if (pending.has(facture.id)) throw new Error('Envoi déjà en cours pour cette facture.');
   pending.add(facture.id);
   try {
-    return await sendDraft(facture, mission);
+    return await importCustomInvoice(facture, mission);
   } finally {
     pending.delete(facture.id);
   }
 }
 
-async function sendDraft(facture, mission) {
+export async function verifyPennylaneImport(id) {
+  const res = await fetch(`${BASE}/customer_invoices/${id}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) throw new Error(`Vérification Pennylane : HTTP ${res.status}`);
+  const invoice = await res.json();
+  return {
+    amount: invoice.currency_amount || invoice.amount,
+    schematron: invoice.schematron_validation_status || 'pending',
+    eInvoicing: invoice.e_invoicing?.status || null,
+    facturX: Boolean(invoice.factur_x),
+  };
+}
+
+async function importCustomInvoice(facture, mission) {
+  const token = getToken();
+  if (!token) throw new Error('Token Pennylane non configuré - rendez-vous dans Paramètres.');
+  if (facture.pennylane_imported && facture.pennylane_id) {
+    return { id: facture.pennylane_id, already_imported: true };
+  }
+  if (facture.pennylane_id && !facture.pennylane_imported) {
+    throw new Error(`Cette facture est déjà liée à l'ancien brouillon Pennylane ${facture.pennylane_id}. Vérifiez ou supprimez ce brouillon dans Pennylane avant un nouvel import.`);
+  }
+
+  const customer = resolveInvoiceCustomer(facture, mission) || {};
+  const customerId = Number(customer.pennylane_customer_id);
+  if (!Number.isSafeInteger(customerId) || customerId <= 0) {
+    throw new Error('ID client Pennylane invalide - renseignez-le dans la fiche du client facturé.');
+  }
+
+  const { lines, totalHT, vatRate, vatAmount, totalTTC } = invoiceTotals(facture, mission);
+  const vat = vatCode(vatRate);
+
+  if (!facture.pennylane_file_attachment_id) {
+    const pdfBlob = await generateInvoicePDF(facture, mission);
+    const form = new FormData();
+    form.append('file', pdfBlob, `${facture.numero}.pdf`);
+    form.append('filename', `${facture.numero}.pdf`);
+    const uploaded = await fetch(`${BASE}/file_attachments`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form,
+    });
+    if (!uploaded.ok) throw await apiError(uploaded, 'Téléversement du PDF');
+    const attachment = await uploaded.json();
+    if (!attachment.id) throw new Error("Pennylane n'a pas renvoyé l'identifiant du PDF.");
+    facture.pennylane_file_attachment_id = attachment.id;
+    await persistFacture(facture);
+  }
+
+  const money = value => Number(value || 0).toFixed(2);
+  let allocatedTax = 0;
+  const invoiceLines = lines.map((line, index) => {
+    const lineTax = index === lines.length - 1
+      ? vatAmount - allocatedTax
+      : Math.round(Number(line.total) * vatRate) / 100;
+    allocatedTax += lineTax;
+    return {
+      // Sur l'endpoint import, currency_amount est le total TTC de la ligne.
+      currency_amount: money(Number(line.total) + lineTax),
+      amount: money(Number(line.total) + lineTax),
+      currency_tax: money(lineTax),
+      tax: money(lineTax),
+      label: line.description,
+      quantity: Number(line.quantity),
+      substance: 'services',
+      raw_currency_unit_price: money(line.unitPrice),
+      unit: line.pennylaneUnit || 'piece',
+      vat_rate: vat,
+    };
+  });
+  const body = {
+    file_attachment_id: facture.pennylane_file_attachment_id,
+    import_as_incomplete: false,
+    date: facture.date_emission,
+    deadline: facture.date_echeance,
+    customer_id: customerId,
+    invoice_number: facture.numero,
+    currency: 'EUR',
+    currency_amount_before_tax: money(totalHT),
+    currency_amount: money(totalTTC),
+    amount: money(totalTTC),
+    currency_tax: money(vatAmount),
+    tax: money(vatAmount),
+    invoice_lines: invoiceLines,
+    convert_to_e_invoice: true,
+    external_reference: `nabhoo-${facture.id}`,
+  };
+
+  const imported = await fetch(`${BASE}/customer_invoices/import`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!imported.ok) throw await apiError(imported, 'Import de la facture');
+  const result = await imported.json();
+  const invoiceId = result.invoice?.id || result.id;
+  if (!invoiceId) throw new Error('Réponse Pennylane sans identifiant de facture.');
+
+  facture.pennylane_id = invoiceId;
+  facture.pennylane_imported = true;
+  facture.pennylane_sent_at = new Date().toISOString();
+  facture.pennylane_conversion_status = 'pending';
+  await persistFacture(facture);
+  return { ...result, id: invoiceId, conversion_pending: true };
+}
+
+async function apiError(response, context) {
+  const err = await response.json().catch(() => ({}));
+  const message = err.message || err.error || (err.errors && JSON.stringify(err.errors)) || 'Requête refusée';
+  return new Error(`${context} - Pennylane ${response.status}${err.code ? ` (${err.code})` : ''} : ${message}`);
+}
+
+async function persistFacture(facture) {
+  const index = store.factures.findIndex(item => item.id === facture.id);
+  if (index !== -1) store.factures[index] = { ...store.factures[index], ...facture };
+  await saveFactures();
+}
+
+// Diagnostic Sandbox historique : crée un brouillon de 1 EUR sans l'envoyer.
+export async function createPennylaneDraftTest(facture, mission) {
   const token = getToken();
   if (!token) throw new Error('Token Pennylane non configuré — rendez-vous dans Paramètres.');
 

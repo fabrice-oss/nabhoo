@@ -62,6 +62,30 @@ function entreprise_form(e = {}) {
         <label>SIRET</label>
         <input type="text" name="siret" value="${escHtml(e.siret || '')}">
       </div>
+      <div class="form-group">
+        <label>Email de facturation</label>
+        <input type="email" name="email" value="${escHtml(e.email || '')}">
+      </div>
+      <div class="form-group">
+        <label>N° TVA intracommunautaire <span style="font-weight:400;color:var(--text-muted)">(si attribué)</span></label>
+        <input type="text" name="tva_intracom" value="${escHtml(e.tva_intracom || '')}" placeholder="FRXX123456789">
+      </div>
+      <div class="form-group">
+        <label>Adresse de facturation <span style="font-weight:400;color:var(--text-muted)">(si différente)</span></label>
+        <input type="text" name="adresse_facturation" value="${escHtml(e.adresse_facturation || '')}">
+      </div>
+      <div class="form-group form-group-half">
+        <label>CP de facturation</label>
+        <input type="text" name="cp_facturation" value="${escHtml(e.cp_facturation || '')}">
+      </div>
+      <div class="form-group form-group-half">
+        <label>Ville de facturation</label>
+        <input type="text" name="ville_facturation" value="${escHtml(e.ville_facturation || '')}">
+      </div>
+      <div class="form-group">
+        <label>ID client Pennylane <span style="font-weight:400;color:var(--text-muted)">(facultatif)</span></label>
+        <input type="number" name="pennylane_customer_id" value="${escHtml(e.pennylane_customer_id || '')}" placeholder="Ex : 29359435">
+      </div>
       <div class="form-actions">
         <button type="button" class="btn-secondary" id="btn-cancel">Annuler</button>
         <button type="submit" class="btn-primary">Enregistrer</button>

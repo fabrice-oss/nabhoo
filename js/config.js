@@ -22,6 +22,7 @@ export const CONFIG = {
     naf: '',
     nda: '',
     forme_juridique: '',
+    tva_intracom: '',
     iban: '',
     bic: '',
     banque: '',
@@ -33,6 +34,8 @@ export const CONFIG = {
     penalites_taux: 'taux directeur de la BCE majoré de 10 points',
     indemnite_recouvrement: 40,
     mention_tva: 'TVA non applicable, art. 293 B du CGI',
+    escompte: "Pas d'escompte pour paiement anticipé",
+    tva_sur_debits: false,
+    tva_taux: 0,
   },
 };
-
