@@ -6,7 +6,7 @@ const views = {
   missions:   () => import('./views/missions.js'),
   organismes: () => import('./views/organismes.js'),
   entreprises: () => import('./views/entreprises.js'),
-  factures:   () => import('./views/factures.js?v=20260911-recovery1'),
+  factures:   () => import('./views/factures.js?v=20260911-recovery2'),
   bpf:        () => import('./views/bpf.js'),
   urssaf:     () => import('./views/urssaf.js'),
   parametres: () => import('./views/parametres.js?v=20260911-facturx3'),

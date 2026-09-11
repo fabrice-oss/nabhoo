@@ -3,7 +3,7 @@ import { uuid, toast, escHtml, confirm, formatDate, formatCurrency, nextInvoiceN
 import { showModal, closeModal, navigate } from '../app.js';
 import { generateInvoicePDF } from '../pdf.js';
 import { uploadPDF } from '../api/drive.js';
-import { clearMissingPennylaneLegacyLink, inspectPennylaneInvoice, sendFactureToPennylane, verifyPennylaneImport } from '../api/pennylane.js?v=20260911-3';
+import { clearMissingPennylaneLegacyLink, detachPennylaneLegacyLink, inspectPennylaneInvoice, sendFactureToPennylane, verifyPennylaneImport } from '../api/pennylane.js?v=20260911-4';
 import { invoiceCustomerOptions, resolveInvoiceCustomer, validateInvoice } from '../invoice-model.js';
 
 export function render(params = {}) {
@@ -405,14 +405,23 @@ async function sendPennylane(id) {
     try {
       const remote = await inspectPennylaneInvoice(facture.pennylane_id);
       if (remote.exists) {
-        toast(remote.draft
-          ? `Le brouillon Pennylane ${facture.pennylane_id} existe encore. Supprimez-le dans Pennylane, puis cliquez à nouveau sur 📤.`
-          : `Le document Pennylane ${facture.pennylane_id} est finalisé : aucune réinitialisation autorisée.`, 'error');
-        return;
-      }
+        if (remote.draft) {
+          toast(`Le brouillon Pennylane ${facture.pennylane_id} existe encore. Supprimez-le dans Pennylane, puis cliquez à nouveau sur 📤.`, 'error');
+          return;
+        }
 
-      const reset = await clearMissingPennylaneLegacyLink(facture);
-      toast(`Ancien lien Pennylane ${reset.previousId} retiré ✓ L’import peut reprendre.`, 'success');
+        const legacyId = facture.pennylane_id;
+        const remoteStatus = remote.invoice?.status || 'finalisé';
+        const detachConfirmed = await confirm(
+          `Pennylane retrouve le document technique ${legacyId} (statut : ${remoteStatus}), mais celui-ci peut être invisible dans son interface.\n\nDissocier uniquement ce lien dans NABHOO puis créer un nouvel import ? Attention : si l’ancien document est comptabilisé en arrière-plan, cela peut créer un doublon.`
+        );
+        if (!detachConfirmed) return;
+        const detached = await detachPennylaneLegacyLink(facture, legacyId);
+        toast(`Lien Pennylane ${detached.previousId} dissocié de ${facture.numero} ✓`, 'success');
+      } else {
+        const reset = await clearMissingPennylaneLegacyLink(facture);
+        toast(`Ancien lien Pennylane ${reset.previousId} retiré ✓ L’import peut reprendre.`, 'success');
+      }
     } catch (e) {
       console.error('Vérification Pennylane échouée :', e);
       toast(`Impossible de reprendre l’envoi : ${e.message}`, 'error');

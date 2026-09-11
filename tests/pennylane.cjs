@@ -67,6 +67,7 @@ function setup(options = {}) {
     saves: () => saves,
     send: () => context.sendFactureToPennylane(facture, mission),
     clearMissing: () => context.clearMissingPennylaneLegacyLink(facture),
+    detach: expectedId => context.detachPennylaneLegacyLink(facture, expectedId),
   };
 }
 
@@ -156,5 +157,14 @@ function response(status, payload) {
   assert.equal(stale.facture.pennylane_id, undefined);
   assert.equal(stale.saves(), 1);
 
-  console.log('Tests Pennylane réussis : PDF personnalisé, import Factur-X, TVA, équilibre, reprise sûre des anciens liens, anti-doublon et vérification. Aucun appel réseau réel.');
+  const orphan = setup({ legacyId: 29370432081920, remoteDraft: false });
+  await assert.rejects(orphan.detach(1), /identifiant Pennylane a changé/i);
+  assert.equal(orphan.facture.pennylane_id, 29370432081920);
+  const detached = await orphan.detach(29370432081920);
+  assert.equal(detached.detached, true);
+  assert.equal(detached.previousId, 29370432081920);
+  assert.equal(orphan.facture.pennylane_id, undefined);
+  assert.equal(orphan.saves(), 1);
+
+  console.log('Tests Pennylane réussis : PDF personnalisé, import Factur-X, TVA, équilibre, reprise et dissociation contrôlées des anciens liens, anti-doublon et vérification. Aucun appel réseau réel.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

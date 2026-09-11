@@ -92,6 +92,23 @@ export async function clearMissingPennylaneLegacyLink(facture) {
   return { previousId, staleLink: true };
 }
 
+export async function detachPennylaneLegacyLink(facture, expectedId) {
+  if (!facture?.pennylane_id || facture.pennylane_imported) {
+    throw new Error('Aucun ancien lien Pennylane à dissocier.');
+  }
+  if (String(facture.pennylane_id) !== String(expectedId)) {
+    throw new Error('L’identifiant Pennylane a changé : la dissociation est annulée par sécurité.');
+  }
+
+  const previousId = facture.pennylane_id;
+  delete facture.pennylane_id;
+  delete facture.pennylane_imported;
+  delete facture.pennylane_sent_at;
+  delete facture.pennylane_conversion_status;
+  await persistFacture(facture);
+  return { previousId, detached: true };
+}
+
 async function importCustomInvoice(facture, mission) {
   const token = getToken();
   if (!token) throw new Error('Token Pennylane non configuré - rendez-vous dans Paramètres.');
