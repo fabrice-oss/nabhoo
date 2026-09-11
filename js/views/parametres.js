@@ -1,7 +1,7 @@
 import { store, saveSettings } from '../data.js';
 import { toast, escHtml, isoToday } from '../utils.js';
 import { listCalendars } from '../api/calendar.js';
-import { sendFactureToPennylane, verifyPennylaneDraft } from '../api/pennylane.js';
+import { sendFactureToPennylane, verifyPennylaneDraft } from '../api/pennylane.js?v=20260911-1';
 
 export function render() {
   const s = store.settings;

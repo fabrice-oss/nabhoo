@@ -3,7 +3,7 @@ import { uuid, toast, escHtml, confirm, formatDate, formatCurrency, nextInvoiceN
 import { showModal, closeModal, navigate } from '../app.js';
 import { generateInvoicePDF } from '../pdf.js';
 import { uploadPDF } from '../api/drive.js';
-import { sendFactureToPennylane } from '../api/pennylane.js';
+import { sendFactureToPennylane } from '../api/pennylane.js?v=20260911-1';
 
 export function render(params = {}) {
   if (params.action === 'new' && params.missionId) {
