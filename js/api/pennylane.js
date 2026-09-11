@@ -60,6 +60,38 @@ export async function verifyPennylaneImport(id) {
   };
 }
 
+export async function inspectPennylaneInvoice(id) {
+  const token = getToken();
+  if (!token) throw new Error('Token Pennylane non configuré - rendez-vous dans Paramètres.');
+  const res = await fetch(`${BASE}/customer_invoices/${id}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 404) return { exists: false, id };
+  if (!res.ok) throw await apiError(res, 'Vérification de l’ancien brouillon');
+  const invoice = await res.json();
+  return { exists: true, id, draft: invoice.draft === true, invoice };
+}
+
+export async function clearMissingPennylaneLegacyLink(facture) {
+  if (!facture?.pennylane_id || facture.pennylane_imported) {
+    throw new Error('Aucun ancien lien Pennylane à réinitialiser.');
+  }
+  const remote = await inspectPennylaneInvoice(facture.pennylane_id);
+  if (remote.exists) {
+    throw new Error(remote.draft
+      ? `Le brouillon Pennylane ${facture.pennylane_id} existe encore. Supprimez-le dans Pennylane, puis cliquez de nouveau sur Envoyer.`
+      : `Le document Pennylane ${facture.pennylane_id} est finalisé. Il ne sera ni dissocié ni supprimé.`);
+  }
+
+  const previousId = facture.pennylane_id;
+  delete facture.pennylane_id;
+  delete facture.pennylane_imported;
+  delete facture.pennylane_sent_at;
+  delete facture.pennylane_conversion_status;
+  await persistFacture(facture);
+  return { previousId, staleLink: true };
+}
+
 async function importCustomInvoice(facture, mission) {
   const token = getToken();
   if (!token) throw new Error('Token Pennylane non configuré - rendez-vous dans Paramètres.');

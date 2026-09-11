@@ -3,7 +3,7 @@ import { uuid, toast, escHtml, confirm, formatDate, formatCurrency, nextInvoiceN
 import { showModal, closeModal, navigate } from '../app.js';
 import { generateInvoicePDF } from '../pdf.js';
 import { uploadPDF } from '../api/drive.js';
-import { sendFactureToPennylane, verifyPennylaneImport } from '../api/pennylane.js?v=20260911-2';
+import { clearMissingPennylaneLegacyLink, inspectPennylaneInvoice, sendFactureToPennylane, verifyPennylaneImport } from '../api/pennylane.js?v=20260911-3';
 import { invoiceCustomerOptions, resolveInvoiceCustomer, validateInvoice } from '../invoice-model.js';
 
 export function render(params = {}) {
@@ -73,7 +73,7 @@ function renderFacturesList(filter) {
                 <td>${f.statut === 'payee' && f.date_paiement ? formatDate(f.date_paiement) : '—'}</td>
                 <td class="actions">
                   <button class="btn-icon btn-pdf" data-id="${f.id}" title="Générer et télécharger le PDF">📄</button>
-                  <button class="btn-icon btn-pennylane" data-id="${f.id}" title="${f.pennylane_id ? 'Déjà envoyée sur Pennylane' : 'Envoyer sur Pennylane'}" ${f.pennylane_id ? 'style="opacity:.45"' : ''}>📤</button>
+                  <button class="btn-icon btn-pennylane" data-id="${f.id}" title="${f.pennylane_imported ? 'Déjà importée dans Pennylane' : f.pennylane_id ? 'Reprendre l’envoi vers Pennylane' : 'Envoyer sur Pennylane'}" ${f.pennylane_imported ? 'style="opacity:.45"' : ''}>📤</button>
                   <button class="btn-icon btn-edit-facture" data-id="${f.id}" title="Modifier la facture">✏️</button>
                   ${f.statut === 'en_attente'
                     ? `<button class="btn-icon btn-mark-paid" data-id="${f.id}" title="Marquer comme payée">✅</button>`
@@ -398,6 +398,24 @@ async function sendPennylane(id) {
       toast(status
         ? `Facture déjà importée - validation Factur-X : ${status.schematron}`
         : `Facture déjà importée dans Pennylane (ID : ${facture.pennylane_id})`, 'warning');
+      return;
+    }
+
+    toast('Vérification de l’ancien brouillon Pennylane…');
+    try {
+      const remote = await inspectPennylaneInvoice(facture.pennylane_id);
+      if (remote.exists) {
+        toast(remote.draft
+          ? `Le brouillon Pennylane ${facture.pennylane_id} existe encore. Supprimez-le dans Pennylane, puis cliquez à nouveau sur 📤.`
+          : `Le document Pennylane ${facture.pennylane_id} est finalisé : aucune réinitialisation autorisée.`, 'error');
+        return;
+      }
+
+      const reset = await clearMissingPennylaneLegacyLink(facture);
+      toast(`Ancien lien Pennylane ${reset.previousId} retiré ✓ L’import peut reprendre.`, 'success');
+    } catch (e) {
+      console.error('Vérification Pennylane échouée :', e);
+      toast(`Impossible de reprendre l’envoi : ${e.message}`, 'error');
       return;
     }
   }

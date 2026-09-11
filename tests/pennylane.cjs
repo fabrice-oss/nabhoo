@@ -15,6 +15,7 @@ function setup(options = {}) {
     id: 'test-001', numero: 'AF-2026-001', client_type: 'organisme', client_id: 'org',
     date_emission: '2026-09-10', date_echeance: '2026-10-25', montant_ht: 2050,
     tva_taux: options.rate ?? 0,
+    ...(options.legacyId ? { pennylane_id: options.legacyId, pennylane_imported: false } : {}),
   };
   const mission = { organisme_id: 'org', intitule: 'Formation test' };
   const customer = { id: 'org', nom: 'Client Test', pennylane_customer_id: options.customer ?? '123' };
@@ -47,14 +48,26 @@ function setup(options = {}) {
         return response(status, options.importPayload ?? { id: 42, status: 'imported' });
       }
       if (request.method !== 'POST' && url.includes('/customer_invoices/')) {
-        return response(200, { id: 42, currency_amount: String(2050 + vatAmount), schematron_validation_status: 'valid', factur_x: true });
+        if (options.remoteStatus === 404) return response(404, { message: 'Not found' });
+        return response(options.remoteStatus ?? 200, {
+          id: options.legacyId ?? 42,
+          draft: options.remoteDraft ?? false,
+          currency_amount: String(2050 + vatAmount),
+          schematron_validation_status: 'valid',
+          factur_x: true,
+        });
       }
       if (url.endsWith('/appendices')) return response(200, { items: [{ id: 9 }] });
       return response(201, { id: 88, draft: true });
     },
   });
   vm.runInContext(source, context);
-  return { context, requests, facture, mission, saves: () => saves, send: () => context.sendFactureToPennylane(facture, mission) };
+  return {
+    context, requests, facture, mission,
+    saves: () => saves,
+    send: () => context.sendFactureToPennylane(facture, mission),
+    clearMissing: () => context.clearMissingPennylaneLegacyLink(facture),
+  };
 }
 
 function response(status, payload) {
@@ -127,5 +140,21 @@ function response(status, payload) {
   assert.equal(verification.schematron, 'valid');
   assert.equal(verification.facturX, true);
 
-  console.log('Tests Pennylane réussis : PDF personnalisé, import Factur-X, TVA, équilibre, reprise, anti-doublon et vérification. Aucun appel réseau réel.');
+  const legacyDraft = setup({ legacyId: 12345, remoteDraft: true });
+  await assert.rejects(legacyDraft.clearMissing(), /existe encore.*Supprimez-le dans Pennylane/i);
+  assert.equal(legacyDraft.facture.pennylane_id, 12345);
+  assert.equal(legacyDraft.saves(), 0);
+
+  const finalized = setup({ legacyId: 67890, remoteDraft: false });
+  await assert.rejects(finalized.clearMissing(), /finalisé.*ni dissocié ni supprimé/i);
+  assert.equal(finalized.facture.pennylane_id, 67890);
+  assert.equal(finalized.saves(), 0);
+
+  const stale = setup({ legacyId: 24680, remoteStatus: 404 });
+  const resetStale = await stale.clearMissing();
+  assert.equal(resetStale.staleLink, true);
+  assert.equal(stale.facture.pennylane_id, undefined);
+  assert.equal(stale.saves(), 1);
+
+  console.log('Tests Pennylane réussis : PDF personnalisé, import Factur-X, TVA, équilibre, reprise sûre des anciens liens, anti-doublon et vérification. Aucun appel réseau réel.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
